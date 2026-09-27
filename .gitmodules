@@ -1,0 +1,3 @@
+[submodule ".agents/python-agent-instructions"]
+	path = .agents/python-agent-instructions
+	url = https://github.com/jonasfh/python-agent-instructions.git
