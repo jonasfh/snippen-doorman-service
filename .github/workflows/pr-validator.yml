@@ -1,0 +1,47 @@
+name: PR Validator
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate PR (Tests, Lint, SemVer & Changelog)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Verify Formatting Hygiene
+        run: |
+          python scripts/format.py
+          git diff --exit-code
+
+      - name: Run Ruff Linter
+        run: |
+          ruff check .
+
+      - name: Run Pytest Test Suite
+        run: |
+          pytest
+
+      - name: Validate Semantic Version & Changelog
+        run: |
+          python scripts/validate_pr.py --base origin/main

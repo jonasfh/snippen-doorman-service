@@ -1,0 +1,41 @@
+{
+  "name": "snippen-doorman-service-python",
+  "image": "mcr.microsoft.com/devcontainers/python:3.14-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "version": "latest",
+      "enableNonRootDocker": "true"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/home/vscode/.venv/bin/python"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "mermaidchart.vscode-mermaid-chart",
+        "ms-azuretools.vscode-docker"
+      ],
+      "recommendations": [
+        "google.google-antigravity"
+      ]
+    }
+  },
+  "runArgs": [
+    "--privileged",
+    "-v",
+    "/dev:/dev"
+  ],
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.gemini; sudo usermod -aG dialout vscode; python3 -m venv /home/vscode/.venv && /home/vscode/.venv/bin/pip install -e \".[dev]\"",
+  "remoteUser": "vscode",
+  "mounts": [
+    "source=snippen-doorman-service-gemini-data,target=/home/vscode/.gemini,type=volume",
+    "source=${localWorkspaceFolder}/..,target=/workspaces,type=bind,consistency=cached"
+  ],
+  "workspaceFolder": "/workspaces/snippen-doorman-service",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/snippen-doorman-service,type=bind,consistency=cached"
+}
