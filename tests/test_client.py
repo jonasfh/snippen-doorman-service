@@ -133,3 +133,104 @@ def test_auth_error_handling(monkeypatch: pytest.MonkeyPatch) -> None:
             await client.lock(timeout=1.0)
 
     asyncio.run(_run())
+
+
+def test_ensure_started_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that _ensure_started correctly starts PushLock and waits for initial update."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        mock_push = MagicMock()
+        mock_push._running = False
+        mock_push._ble_device = None
+        mock_push._first_update_future = MagicMock()
+        mock_push.start = AsyncMock(return_value=MagicMock())
+        mock_push.wait_for_first_update = AsyncMock()
+        mock_push.set_ble_device = MagicMock()
+        mock_push.lock_status = LockStatus.LOCKED
+        mock_push.door_status = DoorStatus.CLOSED
+        mock_push.battery = 88
+        mock_push.is_connected = True
+
+        mock_device = MagicMock()
+        mock_get_device = AsyncMock(return_value=mock_device)
+
+        monkeypatch.setattr("snippen_doorman.ble.client.get_device", mock_get_device)
+        monkeypatch.setattr(client, "_get_or_create_push_lock", lambda: mock_push)
+
+        state = await client.get_status(timeout=2.0)
+        mock_push.set_ble_device.assert_called_once_with(mock_device)
+        mock_push.start.assert_awaited_once()
+        mock_push.wait_for_first_update.assert_awaited_once_with(timeout=2.0)
+        assert state.lock_status == "LOCKED"
+
+    asyncio.run(_run())
+
+
+def test_battery_state_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that BatteryState dataclass/object is converted to percentage int."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        class FakeBatteryState:
+            def __init__(self, voltage: float, percentage: int):
+                self.voltage = voltage
+                self.percentage = percentage
+
+        mock_push = MagicMock()
+        mock_push.lock_status = LockStatus.LOCKED
+        mock_push.door_status = DoorStatus.CLOSED
+        mock_push.battery = FakeBatteryState(voltage=6.4, percentage=95)
+        mock_push.is_connected = True
+
+        monkeypatch.setattr(client, "_get_or_create_push_lock", lambda: mock_push)
+
+        state = await client.get_status(timeout=1.0)
+        assert state.battery == 95
+
+    asyncio.run(_run())
+
+
+def test_disconnect_and_context_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that disconnect and async context manager invoke cleanup."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        cancel_fn = MagicMock()
+        mock_push = MagicMock()
+        mock_push._execute_forced_disconnect = AsyncMock()
+        client._push_lock = mock_push
+        client._cancel_cb = cancel_fn
+
+        await client.disconnect()
+        cancel_fn.assert_called_once()
+        mock_push._execute_forced_disconnect.assert_awaited_once_with("client disconnect")
+
+        # Test context manager
+        mock_push.reset_mock()
+        cancel_fn.reset_mock()
+        client._cancel_cb = cancel_fn
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
+
+        async with client:
+            pass
+
+        cancel_fn.assert_called_once()
+        mock_push._execute_forced_disconnect.assert_awaited_once_with("client disconnect")
+
+    asyncio.run(_run())
