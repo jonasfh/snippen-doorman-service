@@ -14,6 +14,7 @@ from pathlib import Path
 
 IGNORED_DIRS = {
     ".git",
+    ".agents",
     ".venv",
     "__pycache__",
     "build",
@@ -101,13 +102,30 @@ def main() -> None:
     try:
         # Sort imports
         subprocess.run(
-            [str(ruff_bin), "check", "--select", "I", "--fix", str(repo_root)],
+            [
+                str(ruff_bin),
+                "check",
+                "--select",
+                "I",
+                "--fix",
+                "--exclude",
+                ".agents",
+                str(repo_root),
+            ],
             check=True,
             capture_output=True,
         )
         # Format code (using py312 target to ensure backward compatibility for parenthesized exceptions)
         subprocess.run(
-            [str(ruff_bin), "format", "--target-version", "py312", str(repo_root)],
+            [
+                str(ruff_bin),
+                "format",
+                "--target-version",
+                "py312",
+                "--exclude",
+                ".agents",
+                str(repo_root),
+            ],
             check=True,
             capture_output=True,
         )

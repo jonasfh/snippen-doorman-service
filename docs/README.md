@@ -5,3 +5,4 @@ This directory contains comprehensive documentation for the Snippen Doorman Serv
 ## Contents
 
 - **[architecture.md](architecture.md)** — System architecture, design principles, and data flows
+- **[yale_ble_protocol.md](yale_ble_protocol.md)** — Yale Doorman BLE protocol findings, discovery, and authentication

@@ -19,6 +19,7 @@ A Python service for managing temporary access codes and administrative control 
 
 - 📚 **[Documentation Overview](docs/README.md)**: Index of all documentation resources.
 - 📐 **[System Architecture & Design](docs/architecture.md)**: High-level architectural design, system boundaries, and design principles.
+- 📡 **[Yale Doorman BLE Protocol](docs/yale_ble_protocol.md)**: BLE discovery, authentication, session establishment, and status inspection findings.
 - 🛠️ **[Developer Guide](DEV_README.md)**: Setup instructions, Dev Container configuration, testing, and linting.
 - 🤖 **[Agent Guidelines](AGENTS.md)**: Project workflows and conventions for automated agents.
 
@@ -45,6 +46,28 @@ The doorman service can be configured via CLI flags or environment variables:
 
 ## Quick Start (Development)
 
+### BLE Discovery and Lock Operations
+
+Discover Yale Doorman locks and access modules in range:
+
+```bash
+# Scan for Yale BLE devices (10 seconds)
+snippen-doorman discover --timeout 10
+```
+
+Read lock status or operate the lock:
+
+```bash
+# Query lock, door, and battery status
+snippen-doorman status --address "AA:BB:CC:DD:EE:FF" --key "<HEX_KEY>" --slot 1
+
+# Send lock / unlock command
+snippen-doorman lock   --address "AA:BB:CC:DD:EE:FF" --key "<HEX_KEY>" --slot 1
+snippen-doorman unlock --address "AA:BB:CC:DD:EE:FF" --key "<HEX_KEY>" --slot 1
+```
+
+### Start Service
+
 Start the doorman access control service:
 
 ```bash
@@ -53,11 +76,4 @@ python -m snippen_doorman.main
 
 # Or run with custom settings
 python -m snippen_doorman.main --log-level DEBUG --database-path data/doorman.db
-```
-
-Generate a temporary access code:
-
-```bash
-# Generate a time-limited access code
-snippen-doorman generate-code --guest-name "John Doe" --duration-hours 24
 ```
