@@ -54,9 +54,8 @@ For high-level system architecture, communication flows, and boundaries, see [do
      pip install -e ".[dev]"
      ```
 3. **Bluetooth & BlueZ Setup**:
-   - BLE communication requires BlueZ running on the Linux host (`bluetoothctl`, `hciconfig hci0 up`).
-   - For Dev Container BLE execution, host D-Bus system bus socket can be mounted via `mounts` in `.devcontainer/devcontainer.json`:
-     `source=/var/run/dbus/system_bus_socket,target=/var/run/dbus/system_bus_socket,type=bind`.
+   - BLE-kommunikasjon krever en aktiv Bluetooth-adapter og BlueZ på Linux-hosten (`bluetoothctl`, `hciconfig hci0 up`).
+   - Dev Containeren er prekonfigurert med `--net=host` og bind-mount av hostens D-Bus system socket (`/var/run/dbus/system_bus_socket`) i `.devcontainer/devcontainer.json` for direkte tilgang til BLE-maskinvaren.
 4. **Testing, Linting, Formatting, and PR Validation**:
    ```bash
    # Run test suite

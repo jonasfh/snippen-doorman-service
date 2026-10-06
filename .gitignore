@@ -20,3 +20,4 @@ build/
 firmware/config_local.py
 firmware/config.local.py
 firmware/config.json
+diag.json
