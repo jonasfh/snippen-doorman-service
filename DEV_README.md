@@ -18,6 +18,7 @@ snippen-doorman-service/
 │   ├── format.py             # Whitespace & file formatting tool
 │   └── validate_pr.py        # PR SemVer & changelog validation tool
 ├── tools/                    # Companion configuration and testing tools
+│   └── parse_ha_keys.py      # Extract Yale OfflineKeys from Home Assistant debug logs
 ├── src/
 │   └── snippen_doorman/      # Application package
 │       ├── __init__.py       # Package version & exports
@@ -29,7 +30,8 @@ snippen-doorman-service/
 │   ├── conftest.py           # Pytest fixtures
 │   ├── test_client.py        # Lock client tests
 │   ├── test_discovery.py     # BLE discovery tests
-│   └── test_main.py          # CLI runner tests
+│   ├── test_main.py          # CLI runner tests
+│   └── test_parse_ha_keys.py # Home Assistant key parser tests
 ├── .dockerignore             # Docker build context exclusions
 ├── Dockerfile                # Production container image definition (Python 3.14-slim)
 ├── pyproject.toml            # Python packaging and dependency config
@@ -38,7 +40,7 @@ snippen-doorman-service/
 └── CHANGELOG.md              # Project history
 ```
 
-For high-level system architecture, communication flows, and boundaries, see [docs/architecture.md](docs/architecture.md) and [docs/yale_ble_protocol.md](docs/yale_ble_protocol.md).
+For high-level system architecture, communication flows, and boundaries, see [docs/architecture.md](docs/architecture.md), [docs/yale_ble_protocol.md](docs/yale_ble_protocol.md), and [docs/yale_offline_key_extraction.md](docs/yale_offline_key_extraction.md).
 
 ## Development Setup
 

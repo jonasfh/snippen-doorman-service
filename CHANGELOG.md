@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-06
+
+### Added
+- Complete guide for extracting Yale offline keys and setting up dedicated admin account (`post@vestreholmensameie.no`) in `docs/yale_offline_key_extraction.md`
+- Companion CLI tool `tools/parse_ha_keys.py` for parsing and extracting `OfflineKeys` from Home Assistant debug logs into `.env`
+- Unit tests for `parse_ha_keys` parser and `.env` updater in `tests/test_parse_ha_keys.py`
+- Documentation and quick start updates across `README.md`, `DEV_README.md`, and `docs/README.md`
+
 ## [0.2.0] - 2026-10-06
 
 ### Added

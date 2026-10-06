@@ -20,6 +20,7 @@ A Python service for managing temporary access codes and administrative control 
 - 📚 **[Documentation Overview](docs/README.md)**: Index of all documentation resources.
 - 📐 **[System Architecture & Design](docs/architecture.md)**: High-level architectural design, system boundaries, and design principles.
 - 📡 **[Yale Doorman BLE Protocol](docs/yale_ble_protocol.md)**: BLE discovery, authentication, session establishment, and status inspection findings.
+- 🔑 **[Yale Offline Key Extraction](docs/yale_offline_key_extraction.md)**: Extracting offline BLE keys and setting up dedicated admin account.
 - 🛠️ **[Developer Guide](DEV_README.md)**: Setup instructions, Dev Container configuration, testing, and linting.
 - 🤖 **[Agent Guidelines](AGENTS.md)**: Project workflows and conventions for automated agents.
 
@@ -64,6 +65,18 @@ snippen-doorman status --address "AA:BB:CC:DD:EE:FF" --key "<HEX_KEY>" --slot 1
 # Send lock / unlock command
 snippen-doorman lock   --address "AA:BB:CC:DD:EE:FF" --key "<HEX_KEY>" --slot 1
 snippen-doorman unlock --address "AA:BB:CC:DD:EE:FF" --key "<HEX_KEY>" --slot 1
+```
+
+### Extracting Offline Keys
+
+Extract offline keys from a Home Assistant debug log (see [docs/yale_offline_key_extraction.md](docs/yale_offline_key_extraction.md)):
+
+```bash
+# Parse log file and display keys
+python tools/parse_ha_keys.py --log-file ~/Downloads/home-assistant_*.log
+
+# Automatically populate or update .env credentials
+python tools/parse_ha_keys.py --log-file ~/Downloads/home-assistant_*.log --output-env .env
 ```
 
 ### Start Service
