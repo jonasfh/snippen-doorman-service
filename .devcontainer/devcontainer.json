@@ -21,15 +21,17 @@
   },
   "runArgs": [
     "--privileged",
+    "--net=host",
     "-v",
     "/dev:/dev"
   ],
-  "postCreateCommand": "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh docker.io && sudo chown -R vscode:vscode /home/vscode/.gemini && sudo usermod -aG docker vscode && sudo usermod -aG dialout vscode && python3 -m venv /home/vscode/.venv && /home/vscode/.venv/bin/pip install -e \".[dev]\";DOCKER_GID=\"$(stat -c '%g' /var/run/docker.sock)\";groupadd -g $DOCKER_GID docker || true;usermod -aG $DOCKER_GID vscode || usermod -aG docker vscode",
+  "postCreateCommand": "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh docker.io bluez && sudo chown -R vscode:vscode /home/vscode/.gemini && sudo usermod -aG docker vscode && sudo usermod -aG dialout vscode && python3 -m venv /home/vscode/.venv && /home/vscode/.venv/bin/pip install -e \".[dev]\";DOCKER_GID=\"$(stat -c '%g' /var/run/docker.sock)\";groupadd -g $DOCKER_GID docker || true;usermod -aG $DOCKER_GID vscode || usermod -aG docker vscode",
   "remoteUser": "vscode",
   "mounts": [
     "source=snippen-doorman-service-gemini-data,target=/home/vscode/.gemini,type=volume",
     "source=${localWorkspaceFolder}/..,target=/workspaces,type=bind,consistency=cached",
-    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+    "source=/var/run/dbus/system_bus_socket,target=/var/run/dbus/system_bus_socket,type=bind"
   ],
  "workspaceFolder": "/workspaces/snippen-doorman-service",
  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/snippen-doorman-service,type=bind,consistency=cached"
