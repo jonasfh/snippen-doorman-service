@@ -7,12 +7,12 @@ The Snippen Doorman Service manages temporary access codes for Yale Doorman door
 ## System Topology
 
 ```
-[ Snippen Booking (WordPress) ] <=== HTTPS ===> [ Snippen Doorman Service ] <=== API ===> [ Yale Doorman Access Module ]
+[ Snippen Booking (WordPress) ] <=== HTTPS ===> [ Snippen Doorman Service ] <=== BLE (yalexs-ble) ===> [ Yale Doorman Classic + Access Module ]
 ```
 
 - **Snippen Booking Platform**: Manages guest bookings and triggers access code generation
 - **Snippen Doorman Service**: Central service managing temporary codes and door lock control
-- **Yale Doorman Access Module**: Hardware interface for managing temporary codes on Yale locks
+- **Yale Doorman Access Module**: Hardware interface on Yale Doorman Classic communicating over Bluetooth Low Energy (see [yale_ble_protocol.md](yale_ble_protocol.md))
 
 ## Design Principles
 

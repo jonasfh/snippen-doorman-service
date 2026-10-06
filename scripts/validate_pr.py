@@ -21,6 +21,7 @@ from packaging.version import InvalidVersion, Version
 
 IGNORED_DIRS = {
     ".git",
+    ".agents",
     ".venv",
     "__pycache__",
     "build",

@@ -22,10 +22,14 @@ snippen-doorman-service/
 │   └── snippen_doorman/      # Application package
 │       ├── __init__.py       # Package version & exports
 │       ├── main.py           # Entry point & CLI runner
-│       └── (additional modules as needed)
+│       └── ble/              # Bluetooth Low Energy modules
+│           ├── discovery.py  # BLE scanner & Yale device identification
+│           └── client.py     # yalexs-ble wrapper for status and lock operations
 ├── tests/
 │   ├── conftest.py           # Pytest fixtures
-│   └── test_main.py          # Unit tests
+│   ├── test_client.py        # Lock client tests
+│   ├── test_discovery.py     # BLE discovery tests
+│   └── test_main.py          # CLI runner tests
 ├── .dockerignore             # Docker build context exclusions
 ├── Dockerfile                # Production container image definition (Python 3.14-slim)
 ├── pyproject.toml            # Python packaging and dependency config
@@ -34,11 +38,11 @@ snippen-doorman-service/
 └── CHANGELOG.md              # Project history
 ```
 
-For high-level system architecture, communication flows, and boundaries, see [docs/architecture.md](docs/architecture.md).
+For high-level system architecture, communication flows, and boundaries, see [docs/architecture.md](docs/architecture.md) and [docs/yale_ble_protocol.md](docs/yale_ble_protocol.md).
 
 ## Development Setup
 
-1. **Prerequisites**: Python 3.14+ and `pip`.
+1. **Prerequisites**: Python 3.14+, `pip`, and Linux with BlueZ for Bluetooth operations.
 2. **Environment & Dependencies**:
    - In **Dev Container**, the virtual environment is automatically set up at `/home/vscode/.venv` (outside the workspace root) to prevent collisions with host OS environments.
    - For local CLI development outside container:
@@ -47,7 +51,11 @@ For high-level system architecture, communication flows, and boundaries, see [do
      source ~/.venv/bin/activate
      pip install -e ".[dev]"
      ```
-3. **Testing, Linting, Formatting, and PR Validation**:
+3. **Bluetooth & BlueZ Setup**:
+   - BLE communication requires BlueZ running on the Linux host (`bluetoothctl`, `hciconfig hci0 up`).
+   - For Dev Container BLE execution, host D-Bus system bus socket can be mounted via `mounts` in `.devcontainer/devcontainer.json`:
+     `source=/var/run/dbus/system_bus_socket,target=/var/run/dbus/system_bus_socket,type=bind`.
+4. **Testing, Linting, Formatting, and PR Validation**:
    ```bash
    # Run test suite
    pytest
