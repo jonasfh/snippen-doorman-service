@@ -43,21 +43,25 @@ async def run_lock_command(action: str, address: str, key: str, slot: int, timeo
     client = YaleLockClient(address=address, key=key, slot=slot)
     print(f"Connecting to lock {address} (slot {slot})...")
 
-    if action == "status":
-        state = await client.get_status(timeout=timeout)
-    elif action == "lock":
-        state = await client.lock(timeout=timeout)
-    elif action == "unlock":
-        state = await client.unlock(timeout=timeout)
-    else:
-        raise ValueError(f"Unknown lock action: {action}")
+    try:
+        if action == "status":
+            state = await client.get_status(timeout=timeout)
+        elif action == "lock":
+            state = await client.lock(timeout=timeout)
+        elif action == "unlock":
+            state = await client.unlock(timeout=timeout)
+        else:
+            raise ValueError(f"Unknown lock action: {action}")
 
-    print("\n--- Lock Status ---")
-    print(f"Address:    {state.address}")
-    print(f"Lock state: {state.lock_status}")
-    print(f"Door state: {state.door_status}")
-    print(f"Battery:    {state.battery if state.battery is not None else 'Unknown'}")
-    print(f"Connected:  {state.is_connected}")
+        battery_str = f"{state.battery}%" if state.battery is not None else "Unknown"
+        print("\n--- Lock Status ---")
+        print(f"Address:    {state.address}")
+        print(f"Lock state: {state.lock_status}")
+        print(f"Door state: {state.door_status}")
+        print(f"Battery:    {battery_str}")
+        print(f"Connected:  {state.is_connected}")
+    finally:
+        await client.disconnect()
 
 
 def build_parser() -> argparse.ArgumentParser:
