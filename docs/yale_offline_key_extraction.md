@@ -63,10 +63,10 @@ Nøklene benyttes av `snippen-doorman-service` for direkte, sikker Bluetooth Low
 7. Bekreft at låsen nå er synlig og kontrollerbar under driftskontoen.
 
 ### Steg 3: Start midlertidig Home Assistant i Docker
-Kjør opp en midlertidig Home Assistant-container på din arbeidsstasjon:
+Kjør opp en midlertidig Home Assistant-container på din arbeidsstasjon (eller direkte fra Dev Container):
 
 ```bash
-docker run -d --name ha-key-extractor -p 8123:8123 ghcr.io/home-assistant/home-assistant:stable
+docker run -d --name ha-key-extractor -p 8123:8123 ghcr.io/home-assistant/home-assistant:2026.9.4
 ```
 
 Vent ca. 15-30 sekunder til webgrensesnittet er klart.
