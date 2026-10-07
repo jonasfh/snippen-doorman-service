@@ -25,7 +25,8 @@
     "-v",
     "/dev:/dev"
   ],
-  "postCreateCommand": "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh docker.io bluez && sudo chown -R vscode:vscode /home/vscode/.gemini && sudo usermod -aG docker vscode && sudo usermod -aG dialout vscode && python3 -m venv /home/vscode/.venv && /home/vscode/.venv/bin/pip install -e \".[dev]\";DOCKER_GID=\"$(stat -c '%g' /var/run/docker.sock)\";groupadd -g $DOCKER_GID docker || true;usermod -aG $DOCKER_GID vscode || usermod -aG docker vscode",
+  "postCreateCommand": "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh docker.io bluez && sudo chown -R vscode:vscode /home/vscode/.gemini && sudo usermod -aG docker vscode && sudo usermod -aG dialout vscode && python3 -m venv /home/vscode/.venv && /home/vscode/.venv/bin/pip install -e \".[dev]\" && (if [ -S /var/run/docker.sock ]; then DOCKER_GID=$(stat -c '%g' /var/run/docker.sock); sudo groupmod -g $DOCKER_GID docker || sudo groupadd -g $DOCKER_GID docker-host || true; sudo usermod -aG $DOCKER_GID vscode || sudo usermod -aG docker-host vscode || true; sudo chmod 666 /var/run/docker.sock || true; fi)",
+  "postStartCommand": "sudo chmod 666 /var/run/docker.sock 2>/dev/null || true",
   "remoteUser": "vscode",
   "mounts": [
     "source=snippen-doorman-service-gemini-data,target=/home/vscode/.gemini,type=volume",
