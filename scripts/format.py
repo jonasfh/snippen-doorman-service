@@ -22,6 +22,7 @@ IGNORED_DIRS = {
     ".pytest_cache",
     ".ruff_cache",
     "snippen_doorman_service.egg-info",
+    "apk_analysis",
 }
 
 BINARY_EXTENSIONS = {
