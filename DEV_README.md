@@ -27,13 +27,16 @@ snippen-doorman-service/
 │       ├── main.py           # Entry point & CLI runner
 │       └── ble/              # Bluetooth Low Energy modules
 │           ├── discovery.py  # BLE scanner & Yale device identification
-│           └── client.py     # yalexs-ble wrapper for status and lock operations
+│           ├── pin.py        # PIN protocol encoding, packet builders & error parsing
+│           └── client.py     # yalexs-ble wrapper for lock operations & PIN management
 ├── tests/
 │   ├── conftest.py           # Pytest fixtures
 │   ├── test_client.py        # Lock client tests
 │   ├── test_discovery.py     # BLE discovery tests
 │   ├── test_main.py          # CLI runner tests
-│   └── test_parse_ha_keys.py # Home Assistant key parser tests
+│   ├── test_parse_ha_keys.py # Home Assistant key parser tests
+│   └── test_pin.py           # PIN protocol and encoding tests
+
 ├── .dockerignore             # Docker build context exclusions
 ├── Dockerfile                # Production container image definition (Python 3.14-slim)
 ├── pyproject.toml            # Python packaging and dependency config

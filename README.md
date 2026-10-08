@@ -67,6 +67,25 @@ snippen-doorman lock   --address "AA:BB:CC:DD:EE:FF" --key "<HEX_KEY>" --slot 1
 snippen-doorman unlock --address "AA:BB:CC:DD:EE:FF" --key "<HEX_KEY>" --slot 1
 ```
 
+### Local PIN Code Management over BLE
+
+Manage keypad access codes directly over Bluetooth LE without cloud or Wi-Fi bridge:
+
+```bash
+# Add a permanent PIN code to keypad slot 3 (address and key read from .env if present)
+snippen-doorman pin add --pin "123456" --slot 3
+
+# Add a temporary PIN code with ISO validity period
+snippen-doorman pin add --pin "654321" --slot 4 --from "2026-10-08T15:00:00" --to "2026-10-08T18:00:00" --name "Guest"
+
+# Delete a PIN code from keypad slot 3
+snippen-doorman pin delete --slot 3
+
+# List configured PIN codes on the lock
+snippen-doorman pin list --max-slots 10
+```
+
+
 ### Extracting Offline Keys
 
 Extract offline keys from a Home Assistant debug log (see [docs/yale_offline_key_extraction.md](docs/yale_offline_key_extraction.md)):

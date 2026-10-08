@@ -7,12 +7,31 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Self
 
 from bleak import BleakError, BleakScanner
 from yalexs_ble import PushLock
 from yalexs_ble.push import get_device
 from yalexs_ble.session import AuthError, DisconnectedError, YaleXSBLEError
+
+from .pin import (
+    CMD_KEYCODE_ACCESS,
+    CMD_KEYCODE_CLEAR,
+    CMD_KEYCODE_COMMIT,
+    CMD_KEYCODE_SET,
+    CMD_UNITY_GET_KEYCODE,
+    YalePinCode,
+    YalePinError,
+    build_clear_pin_packet,
+    build_commit_pin_packet,
+    build_query_pin_packet,
+    build_schedule_packet,
+    build_set_pin_packet,
+    check_pin_response_error,
+    decode_packed_bcd_pin,
+    encode_packed_bcd_pin,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -247,3 +266,161 @@ class YaleLockClient:
             raise
 
         return self.state
+
+    async def _execute_raw_command(
+        self,
+        cmd: bytearray,
+        command_name: str,
+        expected_opcode: int,
+        timeout: float = 15.0,
+    ) -> bytes:
+        """Send raw August packet over the authenticated session and return response."""
+        async with asyncio.timeout(timeout):
+            lock = await self._ensure_started(timeout=timeout)
+            connected_lock = await lock._ensure_connected()
+            session = getattr(connected_lock, "session", None)
+            if session is None:
+                raise DisconnectedError(f"{self.address}: Lock session is not established.")
+
+            matcher = lambda data: (
+                len(data) >= 2 and data[0] in (0xAA, 0xBB) and data[1] == expected_opcode
+            )
+            response = await session.execute(cmd, command_name, response_matcher=matcher)
+            return response
+
+    async def add_pin(
+        self,
+        pin: str,
+        slot: int,
+        name: str | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
+        timeout: float = 20.0,
+    ) -> YalePinCode:
+        """Create or update a PIN code in a specific slot on the Yale lock.
+
+        Args:
+            pin: 4 to 6 digit numeric PIN.
+            slot: Key slot index (1 or higher).
+            name: Optional friendly name for the credential.
+            valid_from: Optional starting datetime for validity.
+            valid_to: Optional ending datetime for validity.
+            timeout: Maximum timeout for the entire operation in seconds.
+
+        Returns:
+            YalePinCode object on success.
+
+        Raises:
+            ValueError: If PIN, slot, or date parameters are invalid.
+            YalePinError: If the lock rejects the PIN or operation fails.
+            TimeoutError: If the BLE operation times out.
+            AuthError: If authentication fails.
+        """
+        # Validate parameters early
+        encode_packed_bcd_pin(pin)  # validates digits and length 4-6
+        if slot < 1:
+            raise ValueError("Slot must be 1 or higher.")
+        if valid_from and valid_to and valid_to < valid_from:
+            raise ValueError("valid_to cannot be earlier than valid_from.")
+
+        _LOGGER.info("Adding PIN to %s (slot %d)...", self.address, slot)
+        step_timeout = max(5.0, timeout / 3.0)
+
+        # 1. CMD_KEYCODE_SET (0x27)
+        set_pkt = build_set_pin_packet(pin)
+        resp1 = await self._execute_raw_command(
+            set_pkt, "add_pin_set", CMD_KEYCODE_SET, timeout=step_timeout
+        )
+        check_pin_response_error(resp1, CMD_KEYCODE_SET)
+
+        # 2. CMD_KEYCODE_ACCESS (0x2B)
+        sched_pkt = build_schedule_packet(valid_from=valid_from, valid_to=valid_to)
+        resp2 = await self._execute_raw_command(
+            sched_pkt, "add_pin_schedule", CMD_KEYCODE_ACCESS, timeout=step_timeout
+        )
+        check_pin_response_error(resp2, CMD_KEYCODE_ACCESS)
+
+        # 3. CMD_KEYCODE_COMMIT (0x2C)
+        commit_pkt = build_commit_pin_packet(pin, slot)
+        resp3 = await self._execute_raw_command(
+            commit_pkt, "add_pin_commit", CMD_KEYCODE_COMMIT, timeout=step_timeout
+        )
+        check_pin_response_error(resp3, CMD_KEYCODE_COMMIT)
+
+        _LOGGER.info("Successfully added PIN to %s in slot %d.", self.address, slot)
+        return YalePinCode(
+            slot=slot,
+            pin=pin,
+            name=name,
+            valid_from=valid_from,
+            valid_to=valid_to,
+        )
+
+    async def delete_pin(
+        self,
+        slot: int,
+        pin: str | None = None,
+        timeout: float = 20.0,
+    ) -> bool:
+        """Delete/clear a PIN code from a specific slot on the Yale lock.
+
+        Args:
+            slot: Key slot index (1 or higher).
+            pin: Optional PIN to clear specifically.
+            timeout: Operation timeout in seconds.
+
+        Returns:
+            True if deletion was successful.
+
+        Raises:
+            ValueError: If slot is invalid.
+            YalePinError: If the lock rejects the delete operation.
+        """
+        if slot < 1:
+            raise ValueError("Slot must be 1 or higher.")
+
+        _LOGGER.info("Deleting PIN in slot %d on %s...", slot, self.address)
+        clear_pkt = build_clear_pin_packet(slot, pin=pin)
+        resp = await self._execute_raw_command(
+            clear_pkt, "delete_pin", CMD_KEYCODE_CLEAR, timeout=timeout
+        )
+        check_pin_response_error(resp, CMD_KEYCODE_CLEAR)
+        _LOGGER.info("Successfully deleted PIN in slot %d on %s.", slot, self.address)
+        return True
+
+    async def list_pins(
+        self,
+        timeout: float = 20.0,
+        max_slots: int = 10,
+    ) -> list[YalePinCode]:
+        """Query and return active PIN codes stored on the lock across slots 1..max_slots.
+
+        Args:
+            timeout: Overall timeout for querying slots.
+            max_slots: Number of slots to inspect (default: 10).
+
+        Returns:
+            List of YalePinCode objects found on the lock.
+        """
+        _LOGGER.info("Listing PINs on %s (scanning up to %d slots)...", self.address, max_slots)
+        pins: list[YalePinCode] = []
+        per_slot_timeout = max(3.0, timeout / max(1, max_slots))
+
+        for slot_idx in range(1, max_slots + 1):
+            query_pkt = build_query_pin_packet(slot_idx)
+            try:
+                resp = await self._execute_raw_command(
+                    query_pkt,
+                    f"query_pin_slot_{slot_idx}",
+                    CMD_UNITY_GET_KEYCODE,
+                    timeout=per_slot_timeout,
+                )
+                if len(resp) >= 16 and resp[15] == 0:
+                    pin_str = decode_packed_bcd_pin(resp[6:13])
+                    if pin_str:
+                        pins.append(YalePinCode(slot=slot_idx, pin=pin_str))
+            except (YalePinError, TimeoutError, BleakError) as exc:
+                _LOGGER.debug("Could not query pin slot %d on %s: %s", slot_idx, self.address, exc)
+                continue
+
+        return pins
