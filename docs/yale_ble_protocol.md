@@ -132,3 +132,10 @@ snippen-doorman status --address "AA:BB:CC:DD:EE:FF" --key "0123456789abcdef0123
 snippen-doorman lock   --address "AA:BB:CC:DD:EE:FF" --key "0123456789abcdef0123456789abcdef" --slot 1
 snippen-doorman unlock --address "AA:BB:CC:DD:EE:FF" --key "0123456789abcdef0123456789abcdef" --slot 1
 ```
+
+---
+
+## 8. PIN- og adgangskodeadministrasjon over BLE
+
+For detaljer om opcodes, pakkestruktur (18-byte pakker med toer-komplementsjekksum), BCD-koding og 3-trinns sekvensen (`KeyCode_Set` -> `KeyCode_Access` -> `KeyCode_Commit`) for opprettelse og sletting av PIN-koder over BLE, se:
+- **[Yale BLE PIN- og Credential-protokoll](yale_ble_pin_protocol.md)**
