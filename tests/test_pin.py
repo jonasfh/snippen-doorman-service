@@ -47,6 +47,14 @@ def test_packed_bcd_encoding_decoding() -> None:
     assert encoded5 == bytes([0x54, 0x32, 0x1F, 0xFF, 0xFF, 0xFF, 0xFF])
     assert decode_packed_bcd_pin(encoded5) == pin5
 
+    # Edge cases: empty, all zeros, all 0xFF, non-BCD bytes
+    assert decode_packed_bcd_pin(b"") == ""
+    assert decode_packed_bcd_pin(b"\x00" * 7) == ""
+    assert decode_packed_bcd_pin(b"\xff" * 7) == ""
+    assert (
+        decode_packed_bcd_pin(bytes([0x12, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])) == ""
+    )  # 2 digits only
+
 
 def test_pin_validation_errors() -> None:
     """Test validation errors for invalid PIN values."""
@@ -103,7 +111,7 @@ def test_packet_builders() -> None:
     assert (sum(commit_pkt) & 0xFF) == 0
 
     with pytest.raises(ValueError, match="Slot"):
-        build_commit_pin_packet("123456", slot=0)
+        build_commit_pin_packet("123456", slot=-1)
 
     # 5. Clear PIN (0x28)
     clear_pkt = build_clear_pin_packet(slot=3)
@@ -144,9 +152,14 @@ def test_check_pin_response_error() -> None:
     with pytest.raises(YalePinError, match="Invalid response length"):
         check_pin_response_error(b"\xbb\x27", expected_opcode=0x27)
 
+    # 0xCC is a valid response header
+    valid_cc_resp = bytearray(valid_resp)
+    valid_cc_resp[0] = 0xCC
+    check_pin_response_error(bytes(valid_cc_resp), expected_opcode=0x27)
+
     # Unexpected header
     invalid_hdr = bytearray(valid_resp)
-    invalid_hdr[0] = 0xCC
+    invalid_hdr[0] = 0xDD
     with pytest.raises(YalePinError, match="Unexpected response header"):
         check_pin_response_error(bytes(invalid_hdr), expected_opcode=0x27)
 

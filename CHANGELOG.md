@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-10-08
+
+### Fixed
+- Fixed checksum calculation bug where `Session._write_checksum` in `yalexs_ble` overwrote pre-computed command checksums with `0x00`, resulting in command rejection by lock firmware
+- Added automatic pre-clearing (`KeyCode_Clear` `0x28`) before `KeyCode_Set` to ensure lock slot memory hygiene, matching official Yale Home behavior
+- Added support for 0-indexed keypad slots (`slot 0` and higher) matching August hardware conventions
+
+### Verified
+- Physical end-to-end keypad unlock and code deletion verified and confirmed against physical Yale Doorman hardware
+- Documented physical keypad behavior, 3-minute tamper lockout handling, and BLE emergency lockout override in `docs/yale_ble_protocol.md` and `docs/yale_ble_pin_protocol.md`
+
 ## [0.5.0] - 2026-10-08
 
 ### Added

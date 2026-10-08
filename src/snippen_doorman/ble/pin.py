@@ -82,6 +82,8 @@ def encode_packed_bcd_pin(pin: str) -> bytes:
 
 def decode_packed_bcd_pin(raw_bytes: bytes) -> str:
     """Decode a packed BCD PIN buffer (up to 7 bytes) to a digit string."""
+    if not raw_bytes or set(raw_bytes) in ({0x00}, {0xFF}):
+        return ""
     digits: list[str] = []
     for b in raw_bytes:
         high = (b >> 4) & 0x0F
@@ -90,11 +92,18 @@ def decode_packed_bcd_pin(raw_bytes: bytes) -> str:
             digits.append(str(high))
         elif high == 0x0F:
             break
+        else:
+            return ""
         if low <= 9:
             digits.append(str(low))
         elif low == 0x0F:
             break
-    return "".join(digits)
+        else:
+            return ""
+    pin = "".join(digits)
+    if not (4 <= len(pin) <= 6):
+        return ""
+    return pin
 
 
 def calculate_august_checksum(pkt: bytearray) -> int:
@@ -151,8 +160,8 @@ def build_schedule_packet(
 
 def build_commit_pin_packet(pin: str, slot: int) -> bytearray:
     """Build CMD_KEYCODE_COMMIT (0x2C) packet binding PIN to a slot."""
-    if slot < 1:
-        raise ValueError("Slot must be 1 or higher.")
+    if slot < 0:
+        raise ValueError("Slot must be 0 or higher.")
     payload = bytearray(12)
     payload[0:7] = encode_packed_bcd_pin(pin)
     payload[7] = slot & 0xFF
@@ -163,8 +172,8 @@ def build_commit_pin_packet(pin: str, slot: int) -> bytearray:
 
 def build_clear_pin_packet(slot: int, pin: str | None = None) -> bytearray:
     """Build CMD_KEYCODE_CLEAR (0x28) packet deleting PIN for a slot."""
-    if slot < 1:
-        raise ValueError("Slot must be 1 or higher.")
+    if slot < 0:
+        raise ValueError("Slot must be 0 or higher.")
     payload = bytearray(12)
     if pin:
         payload[0:7] = encode_packed_bcd_pin(pin)
@@ -178,8 +187,8 @@ def build_clear_pin_packet(slot: int, pin: str | None = None) -> bytearray:
 
 def build_query_pin_packet(slot: int) -> bytearray:
     """Build CMD_UNITY_GET_KEYCODE (0x39) packet querying PIN at a slot."""
-    if slot < 1:
-        raise ValueError("Slot must be 1 or higher.")
+    if slot < 0:
+        raise ValueError("Slot must be 0 or higher.")
     payload = bytearray(12)
     payload[0:2] = struct.pack("<H", slot)
     return build_pin_packet(CMD_UNITY_GET_KEYCODE, bytes(payload))
@@ -192,7 +201,7 @@ def check_pin_response_error(response: bytes, expected_opcode: int) -> None:
             f"Invalid response length ({len(response)} bytes), expected at least 16 bytes."
         )
 
-    if response[0] not in (0xAA, 0xBB):
+    if response[0] not in (0xAA, 0xBB, 0xCC):
         raise YalePinError(f"Unexpected response header 0x{response[0]:02X}")
 
     if response[1] != expected_opcode:

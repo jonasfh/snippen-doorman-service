@@ -11,9 +11,38 @@ from datetime import datetime
 from typing import Self
 
 from bleak import BleakError, BleakScanner
-from yalexs_ble import PushLock
+from yalexs_ble import PushLock, util
 from yalexs_ble.push import get_device
-from yalexs_ble.session import AuthError, DisconnectedError, YaleXSBLEError
+from yalexs_ble.session import AuthError, DisconnectedError, ResponseError, Session, YaleXSBLEError
+
+
+# Yale Access Modules use 0xCC for keycode/credential command responses.
+# Monkeypatch yalexs_ble.session.Session._validate_response to allow 0xCC alongside 0xAA and 0xBB.
+def _patch_session_validation() -> None:
+    def _extended_validate_response(self: Session, response: bytes | bytearray) -> None:
+        checksum = util._simple_checksum(response)
+        if checksum != 0:
+            raise ResponseError(
+                f"Simple checksum mismatch (expected 0, got {checksum}) in frame {response.hex()}"
+            )
+        if response[0x00] not in (0xAA, 0xBB, 0xCC):
+            raise ResponseError(f"Incorrect flag in response: {response[0x00]}")
+
+    Session._validate_response = _extended_validate_response  # type: ignore[method-assign]
+
+
+def _patch_session_checksum() -> None:
+    def _proper_write_checksum(self: Session, command: bytearray) -> None:
+        command[0x03] = 0
+        checksum = util._simple_checksum(command)
+        command[0x03] = checksum
+
+    Session._write_checksum = _proper_write_checksum  # type: ignore[method-assign]
+
+
+_patch_session_checksum()
+_patch_session_validation()
+
 
 from .pin import (
     CMD_KEYCODE_ACCESS,
@@ -283,9 +312,10 @@ class YaleLockClient:
                 raise DisconnectedError(f"{self.address}: Lock session is not established.")
 
             matcher = lambda data: (
-                len(data) >= 2 and data[0] in (0xAA, 0xBB) and data[1] == expected_opcode
+                len(data) >= 2 and data[0] in (0xAA, 0xBB, 0xCC) and data[1] == expected_opcode
             )
             response = await session.execute(cmd, command_name, response_matcher=matcher)
+
             return response
 
     async def add_pin(
@@ -318,13 +348,26 @@ class YaleLockClient:
         """
         # Validate parameters early
         encode_packed_bcd_pin(pin)  # validates digits and length 4-6
-        if slot < 1:
-            raise ValueError("Slot must be 1 or higher.")
+        if slot < 0:
+            raise ValueError("Slot must be 0 or higher.")
         if valid_from and valid_to and valid_to < valid_from:
             raise ValueError("valid_to cannot be earlier than valid_from.")
 
         _LOGGER.info("Adding PIN to %s (slot %d)...", self.address, slot)
-        step_timeout = max(5.0, timeout / 3.0)
+        await self._ensure_started(timeout=timeout)
+        step_timeout = max(10.0, timeout / 4.0)
+
+        # 0. CMD_KEYCODE_CLEAR (0x28) to ensure slot is clean (matches official Yale Home flow)
+        clear_pkt = build_clear_pin_packet(slot, pin=pin)
+        try:
+            resp0 = await self._execute_raw_command(
+                clear_pkt, f"add_pin_preclear_slot_{slot}", CMD_KEYCODE_CLEAR, timeout=step_timeout
+            )
+            check_pin_response_error(resp0, CMD_KEYCODE_CLEAR)
+        except YalePinError as exc:
+            _LOGGER.debug(
+                "Pre-clearing slot %d on %s returned (ignored): %s", slot, self.address, exc
+            )
 
         # 1. CMD_KEYCODE_SET (0x27)
         set_pkt = build_set_pin_packet(pin)
@@ -365,7 +408,7 @@ class YaleLockClient:
         """Delete/clear a PIN code from a specific slot on the Yale lock.
 
         Args:
-            slot: Key slot index (1 or higher).
+            slot: Key slot index (0 or higher).
             pin: Optional PIN to clear specifically.
             timeout: Operation timeout in seconds.
 
@@ -376,10 +419,11 @@ class YaleLockClient:
             ValueError: If slot is invalid.
             YalePinError: If the lock rejects the delete operation.
         """
-        if slot < 1:
-            raise ValueError("Slot must be 1 or higher.")
+        if slot < 0:
+            raise ValueError("Slot must be 0 or higher.")
 
         _LOGGER.info("Deleting PIN in slot %d on %s...", slot, self.address)
+        await self._ensure_started(timeout=timeout)
         clear_pkt = build_clear_pin_packet(slot, pin=pin)
         resp = await self._execute_raw_command(
             clear_pkt, "delete_pin", CMD_KEYCODE_CLEAR, timeout=timeout
@@ -393,7 +437,7 @@ class YaleLockClient:
         timeout: float = 20.0,
         max_slots: int = 10,
     ) -> list[YalePinCode]:
-        """Query and return active PIN codes stored on the lock across slots 1..max_slots.
+        """Query and return active PIN codes stored on the lock across slots 0..max_slots-1.
 
         Args:
             timeout: Overall timeout for querying slots.
@@ -403,10 +447,11 @@ class YaleLockClient:
             List of YalePinCode objects found on the lock.
         """
         _LOGGER.info("Listing PINs on %s (scanning up to %d slots)...", self.address, max_slots)
+        await self._ensure_started(timeout=timeout)
         pins: list[YalePinCode] = []
-        per_slot_timeout = max(3.0, timeout / max(1, max_slots))
+        per_slot_timeout = max(5.0, timeout / max(1, max_slots))
 
-        for slot_idx in range(1, max_slots + 1):
+        for slot_idx in range(max_slots):
             query_pkt = build_query_pin_packet(slot_idx)
             try:
                 resp = await self._execute_raw_command(
