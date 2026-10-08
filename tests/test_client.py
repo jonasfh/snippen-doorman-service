@@ -234,3 +234,158 @@ def test_disconnect_and_context_manager(monkeypatch: pytest.MonkeyPatch) -> None
         mock_push._execute_forced_disconnect.assert_awaited_once_with("client disconnect")
 
     asyncio.run(_run())
+
+
+def test_add_pin_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test successful PIN provisioning through 3-step sequence."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        sent_commands = []
+
+        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
+            sent_commands.append((name, opcode))
+            # Return valid 0xBB success frame
+            resp = bytearray(18)
+            resp[0] = 0xBB
+            resp[1] = opcode
+            resp[15] = 0x00
+            return bytes(resp)
+
+        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+
+        result = await client.add_pin(pin="123456", slot=3, name="Guest")
+        assert result.pin == "123456"
+        assert result.slot == 3
+        assert result.name == "Guest"
+        assert len(sent_commands) == 3
+        assert sent_commands[0] == ("add_pin_set", 0x27)
+        assert sent_commands[1] == ("add_pin_schedule", 0x2B)
+        assert sent_commands[2] == ("add_pin_commit", 0x2C)
+
+    asyncio.run(_run())
+
+
+def test_add_pin_slot_in_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test error handling when the requested slot is in use."""
+
+    async def _run():
+        from snippen_doorman.ble.pin import YalePinError
+
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
+            resp = bytearray(18)
+            resp[0] = 0xBB
+            resp[1] = opcode
+            if opcode == 0x2C:  # Commit fails with KEYCODE_SLOT_IN_USE (69)
+                resp[15] = 69
+            else:
+                resp[15] = 0x00
+            return bytes(resp)
+
+        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+
+        with pytest.raises(YalePinError, match="KEYCODE_SLOT_IN_USE"):
+            await client.add_pin(pin="123456", slot=3)
+
+    asyncio.run(_run())
+
+
+def test_delete_pin_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test successful PIN deletion."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        sent_commands = []
+
+        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
+            sent_commands.append((name, opcode))
+            resp = bytearray(18)
+            resp[0] = 0xBB
+            resp[1] = opcode
+            resp[15] = 0x00
+            return bytes(resp)
+
+        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+
+        ok = await client.delete_pin(slot=3)
+        assert ok is True
+        assert len(sent_commands) == 1
+        assert sent_commands[0] == ("delete_pin", 0x28)
+
+    asyncio.run(_run())
+
+
+def test_list_pins_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test querying slots to list configured PIN codes."""
+
+    async def _run():
+        from snippen_doorman.ble.pin import encode_packed_bcd_pin
+
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
+            slot_queried = cmd[4]
+            resp = bytearray(18)
+            resp[0] = 0xBB
+            resp[1] = opcode
+            resp[4] = slot_queried
+            if slot_queried == 3:
+                # Slot 3 has a programmed PIN: "654321"
+                resp[6:13] = encode_packed_bcd_pin("654321")
+                resp[15] = 0x00
+            else:
+                # Other slots empty: all 0xFF
+                resp[6:13] = bytes([0xFF] * 7)
+                resp[15] = 0x00
+            return bytes(resp)
+
+        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+
+        pins = await client.list_pins(max_slots=5)
+        assert len(pins) == 1
+        assert pins[0].slot == 3
+        assert pins[0].pin == "654321"
+
+    asyncio.run(_run())
+
+
+def test_pin_argument_validation() -> None:
+    """Test argument validation for add_pin and delete_pin."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        with pytest.raises(ValueError, match="between 4 and 6"):
+            await client.add_pin(pin="12", slot=1)
+
+        with pytest.raises(ValueError, match="Slot"):
+            await client.add_pin(pin="1234", slot=0)
+
+        with pytest.raises(ValueError, match="Slot"):
+            await client.delete_pin(slot=0)
+
+    asyncio.run(_run())

@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-08
+
+### Added
+- Native local PIN code management methods on `YaleLockClient` (`add_pin`, `delete_pin`, `list_pins`) communicating directly with Yale Access Module over BLE without cloud dependency
+- BLE PIN protocol helper module `snippen_doorman.ble.pin` implementing packed BCD encoding/decoding, August 18-byte command packets, and response validation
+- CLI subcommands for `pin add`, `pin delete`, and `pin list` with support for optional validity schedules (`--from`, `--to`) and friendly names
+- Automatic `.env` credential fallback for `--address`, `--key`, and `--key-slot` across all CLI commands
+- Comprehensive unit test suite in `tests/test_pin.py` and extended `tests/test_client.py` and `tests/test_main.py`
+
 ## [0.4.0] - 2026-10-08
+
 
 ### Added
 - Bluetooth HCI snoop capture and GATT session decryption tool `tools/decrypt_ble_snoop.py` for parsing btsnoop logs and bugreport archives, deriving session keys from offline keys, and decrypting command and response frames
