@@ -7,12 +7,15 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
+from snippen_doorman.allocator import SlotAllocator
 from snippen_doorman.ble.client import YaleLockClient
 from snippen_doorman.ble.discovery import discover_yale_devices
 from snippen_doorman.ble.pin import YalePinError
+from snippen_doorman.db import Database, PinStatus
+from snippen_doorman.provisioner import PinProvisioner, run_provisioning_scheduler
 
 
 def load_env_file(path: str | Path = ".env") -> None:
@@ -166,6 +169,110 @@ async def run_pin_command(
         await client.disconnect()
 
 
+async def run_schedule_command(
+    action: str,
+    db_path: str,
+    booking_id: str | None = None,
+    pin: str | None = None,
+    valid_from: datetime | None = None,
+    valid_to: datetime | None = None,
+    status: str | None = None,
+    lead_time_minutes: int = 60,
+    grace_period_minutes: int = 15,
+    interval_seconds: float = 60.0,
+    address: str | None = None,
+    key: str | None = None,
+    key_slot: int = 1,
+    timeout: float = 20.0,
+) -> None:
+    """Execute booking PIN schedule operations."""
+    lock_client = None
+    if address and key:
+        lock_client = YaleLockClient(address=address, key=key, slot=key_slot)
+
+    try:
+        with Database(db_path) as db:
+            allocator = SlotAllocator()
+            provisioner = PinProvisioner(
+                db=db,
+                allocator=allocator,
+                lock_client=lock_client,
+                lead_time=timedelta(minutes=lead_time_minutes),
+                grace_period=timedelta(minutes=grace_period_minutes),
+            )
+
+            if action == "add":
+                if not booking_id or not pin or not valid_from or not valid_to:
+                    raise ValueError(
+                        "--booking-id, --pin, --from, and --to are all required for schedule add."
+                    )
+                rec = provisioner.schedule_pin(
+                    booking_id=booking_id,
+                    pin=pin,
+                    valid_from=valid_from,
+                    valid_to=valid_to,
+                )
+                print(f"\nPIN reservation scheduled for booking '{rec.booking_id}'.")
+                print(f"ID:         {rec.id}")
+                print(f"Status:     {rec.status.value}")
+                print(f"PIN:        {rec.pin}")
+                print(f"Valid from: {rec.valid_from.isoformat()}")
+                print(f"Valid to:   {rec.valid_to.isoformat()}")
+
+            elif action == "list":
+                status_filter = PinStatus(status) if status else None
+                records = db.list_pins(status=status_filter)
+                if not records:
+                    print("\nNo PIN reservations found.")
+                    return
+                print(f"\nFound {len(records)} PIN reservation(s):")
+                print("-" * 80)
+                print(
+                    f"{'Booking ID':<20} {'Slot':<6} {'Status':<13} {'Valid From':<19} {'Valid To':<19}"
+                )
+                print("-" * 80)
+                for r in records:
+                    slot_str = str(r.slot) if r.slot is not None else "-"
+                    vf_str = r.valid_from.strftime("%Y-%m-%d %H:%M")
+                    vt_str = r.valid_to.strftime("%Y-%m-%d %H:%M")
+                    print(
+                        f"{r.booking_id:<20} {slot_str:<6} {r.status.value:<13} {vf_str:<19} {vt_str:<19}"
+                    )
+                print("-" * 80)
+
+            elif action == "revoke":
+                if not booking_id:
+                    raise ValueError("--booking-id is required for schedule revoke.")
+                rec = await provisioner.revoke_pin(booking_id)
+                print(
+                    f"\nBooking '{rec.booking_id}' successfully revoked (status: {rec.status.value})."
+                )
+
+            elif action == "sync":
+                print("Running provisioning reconciliation cycle...")
+                res = await provisioner.tick()
+                print("\nReconciliation completed:")
+                print(f"Activated:          {res.activated if res.activated else 'None'}")
+                print(f"Deprovisioned:      {res.deprovisioned if res.deprovisioned else 'None'}")
+                print(
+                    f"Expired (scheduled):{res.expired_scheduled if res.expired_scheduled else 'None'}"
+                )
+                if res.errors:
+                    print(f"Errors:             {res.errors}")
+
+            elif action == "run":
+                print(
+                    f"Starting provisioning scheduler daemon (poll interval: {interval_seconds:.1f}s)..."
+                )
+                await run_provisioning_scheduler(provisioner, interval_seconds=interval_seconds)
+
+            else:
+                raise ValueError(f"Unknown schedule action: {action}")
+    finally:
+        if lock_client is not None:
+            await lock_client.disconnect()
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct CLI argument parser."""
     load_env_file()
@@ -192,17 +299,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # Helper function for adding common connection arguments
-    def add_common_conn_args(p: argparse.ArgumentParser, slot_name: str = "slot") -> None:
+    def add_common_conn_args(
+        p: argparse.ArgumentParser,
+        slot_name: str = "slot",
+        required: bool = True,
+    ) -> None:
+        is_req = required and env_address is None
         p.add_argument(
             "--address",
             default=env_address,
-            required=env_address is None,
+            required=is_req,
             help="Bluetooth MAC address of the lock (default: from SNIPPEN_DOORMAN_BLE_ADDRESS)",
         )
+        is_key_req = required and env_key is None
         p.add_argument(
             "--key",
             default=env_key,
-            required=env_key is None,
+            required=is_key_req,
             help="16-byte offline key (32 hex characters, default: from SNIPPEN_DOORMAN_BLE_KEY)",
         )
         if slot_name == "slot":
@@ -288,6 +401,91 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_conn_args(pin_list_parser, slot_name="key_slot")
 
+    # schedule subcommand
+    schedule_parser = subparsers.add_parser(
+        "schedule", help="Manage temporary PIN reservations and JIT provisioning"
+    )
+    sched_subparsers = schedule_parser.add_subparsers(
+        dest="schedule_subcommand", help="Schedule operations"
+    )
+
+    # schedule add
+    sched_add_parser = sched_subparsers.add_parser("add", help="Schedule a future PIN reservation")
+    sched_add_parser.add_argument("--booking-id", required=True, help="Unique booking ID")
+    sched_add_parser.add_argument("--pin", required=True, help="4-6 digit numeric PIN")
+    sched_add_parser.add_argument(
+        "--from",
+        dest="valid_from",
+        required=True,
+        help="Start validity (ISO format: YYYY-MM-DDTHH:MM:SS)",
+    )
+    sched_add_parser.add_argument(
+        "--to",
+        dest="valid_to",
+        required=True,
+        help="End validity (ISO format: YYYY-MM-DDTHH:MM:SS)",
+    )
+
+    # schedule list
+    sched_list_parser = sched_subparsers.add_parser(
+        "list", help="List PIN reservations from database"
+    )
+    sched_list_parser.add_argument(
+        "--status",
+        choices=["SCHEDULED", "PROVISIONED", "REVOKED", "EXPIRED"],
+        default=None,
+        help="Filter by status",
+    )
+
+    # schedule revoke
+    sched_revoke_parser = sched_subparsers.add_parser(
+        "revoke", help="Revoke a PIN reservation and remove from lock"
+    )
+    sched_revoke_parser.add_argument("--booking-id", required=True, help="Unique booking ID")
+    add_common_conn_args(sched_revoke_parser, slot_name="key_slot", required=False)
+
+    # schedule sync
+    sched_sync_parser = sched_subparsers.add_parser(
+        "sync", help="Run a single provisioning reconciliation cycle"
+    )
+    sched_sync_parser.add_argument(
+        "--lead-time",
+        type=int,
+        default=60,
+        help="Lead time in minutes before booking start (default: 60)",
+    )
+    sched_sync_parser.add_argument(
+        "--grace-period",
+        type=int,
+        default=15,
+        help="Grace period in minutes after booking end (default: 15)",
+    )
+    add_common_conn_args(sched_sync_parser, slot_name="key_slot", required=False)
+
+    # schedule run
+    sched_run_parser = sched_subparsers.add_parser(
+        "run", help="Run the JIT provisioning scheduler daemon"
+    )
+    sched_run_parser.add_argument(
+        "--interval",
+        type=float,
+        default=60.0,
+        help="Polling interval in seconds (default: 60.0)",
+    )
+    sched_run_parser.add_argument(
+        "--lead-time",
+        type=int,
+        default=60,
+        help="Lead time in minutes before booking start (default: 60)",
+    )
+    sched_run_parser.add_argument(
+        "--grace-period",
+        type=int,
+        default=15,
+        help="Grace period in minutes after booking end (default: 15)",
+    )
+    add_common_conn_args(sched_run_parser, slot_name="key_slot", required=False)
+
     return parser
 
 
@@ -344,6 +542,35 @@ def main_cli(argv: list[str] | None = None) -> None:
             )
         except (OSError, RuntimeError, ValueError, YalePinError) as exc:
             logger.error("Error executing pin %s: %s", args.pin_subcommand, exc)
+            sys.exit(1)
+    elif args.subcommand == "schedule":
+        if not args.schedule_subcommand:
+            parser.parse_args(["schedule", "--help"])
+            return
+
+        try:
+            valid_from = parse_iso_datetime(getattr(args, "valid_from", None))
+            valid_to = parse_iso_datetime(getattr(args, "valid_to", None))
+            asyncio.run(
+                run_schedule_command(
+                    action=args.schedule_subcommand,
+                    db_path=args.database_path,
+                    booking_id=getattr(args, "booking_id", None),
+                    pin=getattr(args, "pin", None),
+                    valid_from=valid_from,
+                    valid_to=valid_to,
+                    status=getattr(args, "status", None),
+                    lead_time_minutes=getattr(args, "lead_time", 60),
+                    grace_period_minutes=getattr(args, "grace_period", 15),
+                    interval_seconds=getattr(args, "interval", 60.0),
+                    address=getattr(args, "address", None),
+                    key=getattr(args, "key", None),
+                    key_slot=getattr(args, "key_slot", 1),
+                    timeout=getattr(args, "timeout", 20.0),
+                )
+            )
+        except (OSError, RuntimeError, ValueError, KeyError, YalePinError) as exc:
+            logger.error("Error executing schedule %s: %s", args.schedule_subcommand, exc)
             sys.exit(1)
     else:
         logger.info("Starting Snippen Doorman Service")

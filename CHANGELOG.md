@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-08
+
+### Added
+- Local keypad slot allocator (`SlotAllocator`) allocating guest slots in descending order (slots 9 down to 3) to protect admin slots 0-2 reserved for Yale Home
+- Persistent SQLite PIN management database (`Database`) and data model (`PinRecord`, `PinStatus`) tracking reservations, slots, and `created_at` / `modified_at` audit timestamps
+- Time-controlled Just-In-Time (JIT) provisioning engine (`PinProvisioner`) programming PINs onto the lock within a lead-time window and deprovisioning after expiration plus grace period
+- Background scheduler loop (`run_provisioning_scheduler`) for periodic reconciliation and slot recycling
+- CLI subcommands for `schedule add`, `schedule list`, `schedule revoke`, `schedule sync`, and `schedule run`
+- Comprehensive test suite for slot allocation, persistent state hydration, and JIT provisioning reconciliation
+
 ## [0.5.1] - 2026-10-08
 
 ### Fixed
