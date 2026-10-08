@@ -18,6 +18,8 @@ snippen-doorman-service/
 │   ├── format.py             # Whitespace & file formatting tool
 │   └── validate_pr.py        # PR SemVer & changelog validation tool
 ├── tools/                    # Companion configuration and testing tools
+│   ├── decrypt_ble_snoop.py  # Decrypt Yale Doorman BLE sessions from btsnoop logs / bugreports
+│   ├── fetch_btsnoop.py      # Automated ADB pull and extraction of Bluetooth HCI snoop logs
 │   └── parse_ha_keys.py      # Extract Yale OfflineKeys from Home Assistant debug logs
 ├── src/
 │   └── snippen_doorman/      # Application package

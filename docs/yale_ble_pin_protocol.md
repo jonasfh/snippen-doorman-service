@@ -251,3 +251,39 @@ Dersom operasjonen feiler, returnerer modulen en feilstatus i JSON-responsen:
 | `KEYCODE_INVALID_ACCESS` | Ugyldig tidsplan eller gyldighetsperiode |
 | `KEYCODE_DISABLE` | Tastaturfunksjon er deaktivert |
 | `KEYCODE_TIMEOUT` | Tidsavbrudd under operasjon |
+
+---
+
+## 8. Verifisering og dekryptering via Bluetooth HCI Snoop
+
+For å ettergå protokollen mot reelle data fra Yale Home-appen benyttes verktøyet `tools/decrypt_ble_snoop.py`:
+
+```
++---------------------+      AES-128-ECB (offline_key)      +---------------------+
+| Klient Nonce 1 (8B) | --------------------------------->  |  Yale Access Modul  |
++---------------------+                                     +---------------------+
+                                                            |  Lås Nonce 1 (8B)   |
++---------------------+      AES-128-ECB (offline_key)      +---------------------+
+|     Host Mottar     | <---------------------------------- |
++---------------------+
+           |
+           v
++---------------------------------------------------------------------------------+
+| Session Key (16 bytes) = Client Nonce 1 (8 bytes) + Lock Nonce 1 (8 bytes)      |
++---------------------------------------------------------------------------------+
+           |
+           v
++---------------------------------------------------------------------------------+
+| Dekryptering av etterfølgende GATT-kommandoer:                                  |
+| AES-128-CBC med IV = 16 null-bytes (bytes(16)) over de første 16 bytes         |
++---------------------------------------------------------------------------------+
+```
+
+### Kjøring av dekrypteringsverktøyet
+```bash
+# Automatisk uthenting fra tilkoblet telefon via ADB og dekryptering:
+python tools/fetch_btsnoop.py
+
+# Eller direkte dekryptering av en btsnoop_hci.log / PCAP / bugreport.zip:
+python tools/decrypt_ble_snoop.py data/btsnoop_hci.log -k 438b544da1ffd82510a973d5ff9853bb
+```
