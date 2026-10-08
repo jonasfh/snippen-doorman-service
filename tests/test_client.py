@@ -257,16 +257,18 @@ def test_add_pin_success(monkeypatch: pytest.MonkeyPatch) -> None:
             resp[15] = 0x00
             return bytes(resp)
 
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
         monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
 
         result = await client.add_pin(pin="123456", slot=3, name="Guest")
         assert result.pin == "123456"
         assert result.slot == 3
         assert result.name == "Guest"
-        assert len(sent_commands) == 3
-        assert sent_commands[0] == ("add_pin_set", 0x27)
-        assert sent_commands[1] == ("add_pin_schedule", 0x2B)
-        assert sent_commands[2] == ("add_pin_commit", 0x2C)
+        assert len(sent_commands) == 4
+        assert sent_commands[0] == ("add_pin_preclear_slot_3", 0x28)
+        assert sent_commands[1] == ("add_pin_set", 0x27)
+        assert sent_commands[2] == ("add_pin_schedule", 0x2B)
+        assert sent_commands[3] == ("add_pin_commit", 0x2C)
 
     asyncio.run(_run())
 
@@ -293,6 +295,7 @@ def test_add_pin_slot_in_use(monkeypatch: pytest.MonkeyPatch) -> None:
                 resp[15] = 0x00
             return bytes(resp)
 
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
         monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
 
         with pytest.raises(YalePinError, match="KEYCODE_SLOT_IN_USE"):
@@ -321,6 +324,7 @@ def test_delete_pin_success(monkeypatch: pytest.MonkeyPatch) -> None:
             resp[15] = 0x00
             return bytes(resp)
 
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
         monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
 
         ok = await client.delete_pin(slot=3)
@@ -359,6 +363,7 @@ def test_list_pins_success(monkeypatch: pytest.MonkeyPatch) -> None:
                 resp[15] = 0x00
             return bytes(resp)
 
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
         monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
 
         pins = await client.list_pins(max_slots=5)
@@ -383,9 +388,9 @@ def test_pin_argument_validation() -> None:
             await client.add_pin(pin="12", slot=1)
 
         with pytest.raises(ValueError, match="Slot"):
-            await client.add_pin(pin="1234", slot=0)
+            await client.add_pin(pin="1234", slot=-1)
 
         with pytest.raises(ValueError, match="Slot"):
-            await client.delete_pin(slot=0)
+            await client.delete_pin(slot=-1)
 
     asyncio.run(_run())

@@ -146,7 +146,7 @@ async def run_pin_command(
             await client.delete_pin(slot=slot, pin=pin, timeout=timeout)
             print(f"\nPIN in slot {slot} successfully deleted.")
         elif action == "list":
-            print(f"Scanning slots 1-{max_slots} for configured PIN codes...")
+            print(f"Scanning slots 0-{max_slots - 1} for configured PIN codes...")
             pins = await client.list_pins(timeout=timeout, max_slots=max_slots)
             if not pins:
                 print(
@@ -248,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pin_add_parser.add_argument("--pin", required=True, help="4-6 digit numeric PIN")
     pin_add_parser.add_argument(
-        "--slot", type=int, required=True, help="Keypad PIN slot (1 or higher)"
+        "--slot", type=int, required=True, help="Keypad PIN slot (0 or higher)"
     )
     pin_add_parser.add_argument(
         "--name", default=None, help="Optional friendly name for the PIN credential"
@@ -272,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
         "delete", help="Delete a PIN code from a keypad slot"
     )
     pin_del_parser.add_argument(
-        "--slot", type=int, required=True, help="Keypad PIN slot to clear (1 or higher)"
+        "--slot", type=int, required=True, help="Keypad PIN slot to clear (0 or higher)"
     )
     pin_del_parser.add_argument(
         "--pin", default=None, help="Optional PIN to match and delete specifically"

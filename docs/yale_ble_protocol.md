@@ -133,9 +133,41 @@ snippen-doorman lock   --address "AA:BB:CC:DD:EE:FF" --key "0123456789abcdef0123
 snippen-doorman unlock --address "AA:BB:CC:DD:EE:FF" --key "0123456789abcdef0123456789abcdef" --slot 1
 ```
 
+### Administrere PIN-koder over BLE:
+```bash
+# Legge til kode i spor 1 (fast/always):
+snippen-doorman pin add --pin 147258 --slot 1
+
+# Legge til tidsbegrenset kode:
+snippen-doorman pin add --pin 147258 --slot 1 --from 2026-10-08T08:00:00 --to 2026-10-08T20:00:00
+
+# Slette kode i spor 1:
+snippen-doorman pin delete --slot 1
+
+# Liste opp spor:
+snippen-doorman pin list --max-slots 10
+```
+
 ---
 
 ## 8. PIN- og adgangskodeadministrasjon over BLE
 
-For detaljer om opcodes, pakkestruktur (18-byte pakker med toer-komplementsjekksum), BCD-koding og 3-trinns sekvensen (`KeyCode_Set` -> `KeyCode_Access` -> `KeyCode_Commit`) for opprettelse og sletting av PIN-koder over BLE, se:
+For detaljer om opcodes, pakkestruktur (18-byte pakker med toer-komplementsjekksum), BCD-koding og 4-trinns sekvensen (`KeyCode_Clear` (pre-clear) -> `KeyCode_Set` -> `KeyCode_Access` -> `KeyCode_Commit`) for opprettelse og sletting av PIN-koder over BLE, se:
 - **[Yale BLE PIN- og Credential-protokoll](yale_ble_pin_protocol.md)**
+
+---
+
+## 9. Fysisk tastaturatferd og verifikasjon (Yale Doorman Classic / V2N)
+
+1. **Tasteflyt på fysisk tastatur**:
+   - Vekk tastaturet ved å legge håndflaten over panelet til tallene lyser opp.
+   - Tast koden etterfulgt av stjerne: `* <KODE> *` (eller `<KODE> *`).
+   - Firkant-tasten (`#`) benyttes **kun** i kombinasjon med masterkode for å gå inn i den interne innstillingsmenyen (`# masterkode #`), og vil gi feiltone dersom den tastes sammen med en vanlig brukers PIN.
+
+2. **Manipulasjonssperre (Feiltastingssperre)**:
+   - Ved tre påfølgende feiltastinger går låsen i en **3-minutters sikkerhetssperre**. Tastaturet blinker rødt og avviser all inntasting.
+   - **Nødoppheving over BLE**: Å sende en `unlock`-kommando over BLE (f.eks. via `snippen-doorman unlock`) eller skanne en gyldig RFID-nøkkelbrikke nullstiller sperren umiddelbart.
+
+3. **Sporindeksering og sky-decoupling**:
+   - Yale Access-modulen og låsens mikrokontroller benytter **0-basert sporindeksering** (`slot 0`, `slot 1`, ...).
+   - Selve maskinvaren i Yale Doorman lagrer kun `(slot, pin, schedule)`. Koblingen mellom leietaker/gjest, navn og hvilket spor som er i bruk vedlikeholdes av overliggende programvare (Yale Home i skyen, eller `snippen-doorman-service` lokalt).

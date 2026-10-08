@@ -130,26 +130,34 @@ For Yale Doorman benyttes typisk `0` for PIN-koder.
 
 ## 5. Protokollsekvens: Opprette eller endre PIN-kode
 
-I Yale Home-appen (`com.aaecosystem.luna.model.Lock.sendSetKeyCode`) utføres opprettelse eller oppdatering av en PIN som en **atomisk 3-stegs sekvens**:
+I Yale Home-appen og produksjonsflyten utføres opprettelse eller oppdatering av en PIN som en **4-stegs sekvens** (inkludert pre-clear for å sikre at sporet i mikrokontrolleren er rent):
 
 ```
 Klient (Linux / Mobil)                                Yale Access Modul
        |                                                      |
+       |  0. KeyCode_Clear (0x28) [Pre-clear slot & PIN]      |
+       |----------------------------------------------------->|
+       |  Svar: ACK med 0xAA / 0xBB (Slot klargjort)          |
+       |<-----------------------------------------------------|
+       |                                                      |
        |  1. KeyCode_Set (0x27) [PIN bytes]                   |
        |----------------------------------------------------->|
-       |  Svar: ACK med bekreftet "keyCode"                   |
+       |  Svar: ACK med 0xBB (Bekreftet "keyCode")            |
        |<-----------------------------------------------------|
        |                                                      |
        |  2. KeyCode_Access (0x2B) [Tidsplan / Schedule]      |
        |----------------------------------------------------->|
-       |  Svar: ACK med {"type", "start", "end"}              |
+       |  Svar: ACK med 0xBB (Bekreftet schedule)             |
        |<-----------------------------------------------------|
        |                                                      |
        |  3. KeyCode_Commit (0x2C) [PIN, Slot, Type]          |
        |----------------------------------------------------->|
-       |  Svar: ACK {"error": "COMM_SUCCESS"}                 |
+       |  Svar: ACK med 0xBB (PIN skrevet til maskinvare)     |
        |<-----------------------------------------------------|
 ```
+
+### Steg 0: `KeyCode_Clear` (`0x28`) - Pre-clear
+For å unngå konflikter i mikrokontrollerens minne dersom sporet allerede er opptatt, sender klienten først en `KeyCode_Clear`-pakke for sporet. Eventuelle feil her ignoreres hvis sporet allerede var tomt.
 
 ### Steg 1: `KeyCode_Set` (`0x27`)
 Forbereder modulen på den nye PIN-koden:
@@ -163,7 +171,7 @@ Forbereder modulen på den nye PIN-koden:
   - Byte `12`: `credential_type` (`0x00` for PIN)
   - Byte `16..17`: `0x02, 0x00`
 - **Validering av svar**:
-  Modulen returnerer JSON-respons der feltet `keyCode` matcher innsendt PIN.
+  Modulen returnerer respons med header `0xBB` (`bb27...`) der payloaden matcher innsendt PIN.
 
 ### Steg 2: `KeyCode_Access` (`0x2B`)
 Definerer når PIN-koden skal være aktiv:
@@ -238,9 +246,18 @@ Kalles via `sendClearAllKeyCodes()`:
 
 ---
 
-## 7. Feilkoder fra låsen
+## 7. Svarmeldinger og feilkoder fra låsen
 
-Dersom operasjonen feiler, returnerer modulen en feilstatus i JSON-responsen:
+### Svarsynkronisering og headere:
+- `0xBB` / `0xAA`: Gyldig bekreftelse fra modulen (`bb27` for SET, `bb2b` for ACCESS, `bb2c` for COMMIT, `aa28`/`bb28` for CLEAR).
+- `0xCC`: Feilrespons eller ekko dersom pakken ble avvist eller sjekksummen i byte 3 var korrupt.
+
+### Viktig sjekksum-felle i klientimplementasjoner:
+`Session._write_checksum(command)` i `yalexs_ble` beregner `(-sum(command[:18])) & 0xFF` uten først å nullstille `command[0x03]`. Dersom en kommandopakke sendes inn der sjekksummen allerede er ferdig beregnet (slik at totalsummen modulo 256 er 0), vil `_write_checksum` beregne `0x00` og overskrive byte 3 med null. Modulen mottar da en pakke med korrupt sjekksum, kvitterer med `0xCC`, og forkaster koden uten å lagre den i flash-minnet.
+Løsning: Klienten må patche eller sikre at `command[0x03] = 0` før sjekksummen summeres.
+
+### Feilkoder fra modulen:
+Dersom en operasjon feiler i modulen, returneres en statuskode:
 
 | Feilkonstant | Beskrivelse |
 |---|---|

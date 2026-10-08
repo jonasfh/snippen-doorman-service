@@ -43,3 +43,6 @@ snippen-doorman-service/
 - **Database Tables**: Always include `created_at` and `modified_at` timestamp columns on database models (see [Common Architecture Standards](file:///.agents/common-agent-instructions/ARCHITECTURE.md)).
 - **Type Annotations**: Use Python type hints (`typing`) across all new classes and functions.
 - **Async & I/O**: Use async/await for network integrations where applicable.
+- **Yale Access Module BLE Protocol & yalexs-ble Integration**:
+  - `Session._write_checksum` in `yalexs-ble` expects `command[0x03] == 0` before calculating the checksum. Raw August command frames must zero `command[0x03]` or monkeypatch `Session._write_checksum` to avoid sending a corrupt `0x00` checksum.
+  - Yale response headers: `0xAA` and `0xBB` indicate successful command execution (`bb27`, `bb2b`, `bb2c`, `aa28`, `bb28`). A `0xCC` response header indicates command rejection or checksum error.
