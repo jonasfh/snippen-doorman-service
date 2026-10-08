@@ -85,6 +85,26 @@ snippen-doorman pin delete --slot 3
 snippen-doorman pin list --max-slots 10
 ```
 
+### Slot Allocation & JIT PIN Provisioning
+
+To avoid conflicts with administrative credentials in the official Yale Home app (which populates slots 0 to 2), `snippen-doorman-service` shields slots 0–2 and allocates guest slots strictly in descending order (slots 9 down to 3). Temporary codes are scheduled in SQLite and provisioned Just-In-Time (JIT) over BLE prior to booking start:
+
+```bash
+# Pre-schedule a booking PIN (persisted in SQLite, ready for JIT lock programming)
+snippen-doorman schedule add --booking-id "res_123" --pin "123456" --from "2026-10-08T14:00:00" --to "2026-10-08T18:00:00"
+
+# List scheduled, provisioned, expired, or revoked PIN reservations
+snippen-doorman schedule list
+
+# Run a reconciliation cycle (allocates slots and programs codes entering window, cleans up expired)
+snippen-doorman schedule sync
+
+# Revoke a booking immediately (removes from lock if currently provisioned and frees slot)
+snippen-doorman schedule revoke --booking-id "res_123"
+
+# Run the JIT provisioning scheduler daemon
+snippen-doorman schedule run --interval 60
+```
 
 ### Extracting Offline Keys
 

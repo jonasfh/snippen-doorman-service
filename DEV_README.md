@@ -24,19 +24,25 @@ snippen-doorman-service/
 ├── src/
 │   └── snippen_doorman/      # Application package
 │       ├── __init__.py       # Package version & exports
-│       ├── main.py           # Entry point & CLI runner
+│       ├── allocator.py      # Keypad slot allocation (descending 9->3, shielding 0-2)
+│       ├── db.py             # SQLite storage and PinRecord models with audit timestamps
+│       ├── main.py           # Entry point & CLI runner (pin and schedule subcommands)
+│       ├── provisioner.py    # JIT PIN provisioning engine and scheduler daemon
 │       └── ble/              # Bluetooth Low Energy modules
 │           ├── discovery.py  # BLE scanner & Yale device identification
 │           ├── pin.py        # PIN protocol encoding, packet builders & error parsing
 │           └── client.py     # yalexs-ble wrapper for lock operations & PIN management
 ├── tests/
 │   ├── conftest.py           # Pytest fixtures
+│   ├── test_allocator.py     # SlotAllocator tests
 │   ├── test_client.py        # Lock client tests
+│   ├── test_db.py            # SQLite database and PinRecord tests
+│   ├── test_decrypt_ble_snoop.py # BLE packet decryption tests
 │   ├── test_discovery.py     # BLE discovery tests
-│   ├── test_main.py          # CLI runner tests
+│   ├── test_main.py          # CLI runner and subcommand tests
 │   ├── test_parse_ha_keys.py # Home Assistant key parser tests
-│   └── test_pin.py           # PIN protocol and encoding tests
-
+│   ├── test_pin.py           # PIN protocol and encoding tests
+│   └── test_provisioner.py   # JIT provisioning engine tests
 ├── .dockerignore             # Docker build context exclusions
 ├── Dockerfile                # Production container image definition (Python 3.14-slim)
 ├── pyproject.toml            # Python packaging and dependency config
