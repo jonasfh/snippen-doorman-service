@@ -223,3 +223,85 @@ def test_schedule_cli_execution_roundtrip(tmp_path: Path, capsys: pytest.Capture
     main_cli(["--database-path", db_file, "schedule", "revoke", "--booking-id", "cli_book_1"])
     captured = capsys.readouterr()
     assert "Booking 'cli_book_1' successfully revoked" in captured.out
+
+
+def test_rtc_subcommands_parser() -> None:
+    """Test argument parser for rtc sync command."""
+    parser = build_parser()
+
+    # 1. rtc sync with defaults
+    sync_args = parser.parse_args(
+        [
+            "rtc",
+            "sync",
+            "--address",
+            "AA:BB:CC:DD:EE:FF",
+            "--key",
+            "0123456789abcdef0123456789abcdef",
+            "--key-slot",
+            "1",
+        ]
+    )
+    assert sync_args.subcommand == "rtc"
+    assert sync_args.rtc_subcommand == "sync"
+    assert sync_args.address == "AA:BB:CC:DD:EE:FF"
+    assert sync_args.key == "0123456789abcdef0123456789abcdef"
+    assert sync_args.key_slot == 1
+    assert sync_args.rtc_time is None
+
+    # 2. rtc sync with explicit ISO time
+    sync_time_args = parser.parse_args(
+        [
+            "rtc",
+            "sync",
+            "--address",
+            "AA:BB:CC:DD:EE:FF",
+            "--key",
+            "0123456789abcdef0123456789abcdef",
+            "--time",
+            "2026-10-09T14:30:00",
+        ]
+    )
+    assert sync_time_args.rtc_time == "2026-10-09T14:30:00"
+
+
+def test_run_rtc_command(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    """Test run_rtc_command execution."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from snippen_doorman.main import run_rtc_command
+
+    mock_client = AsyncMock()
+    mock_client.set_rtc = AsyncMock(return_value=1791439200)
+    mock_client.disconnect = AsyncMock()
+
+    monkeypatch.setattr("snippen_doorman.main.YaleLockClient", lambda **kwargs: mock_client)
+
+    # 1. Successful rtc sync
+    asyncio.run(
+        run_rtc_command(
+            action="sync",
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+            timestamp=datetime(2026, 10, 9, 14, 0, 0, tzinfo=UTC),
+        )
+    )
+    mock_client.set_rtc.assert_awaited_once()
+    mock_client.disconnect.assert_awaited_once()
+
+    captured = capsys.readouterr()
+    assert "Lock RTC clock synchronized successfully" in captured.out
+    assert "1791439200" in captured.out
+
+    # 2. Unknown action raises ValueError
+    with pytest.raises(ValueError, match="Unknown RTC action"):
+        asyncio.run(
+            run_rtc_command(
+                action="invalid",
+                address="AA:BB:CC:DD:EE:FF",
+                key="0123456789abcdef0123456789abcdef",
+                slot=1,
+            )
+        )

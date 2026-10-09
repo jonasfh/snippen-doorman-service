@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -49,6 +50,7 @@ from .pin import (
     CMD_KEYCODE_CLEAR,
     CMD_KEYCODE_COMMIT,
     CMD_KEYCODE_SET,
+    CMD_SET_RTC,
     CMD_UNITY_GET_KEYCODE,
     YalePinCode,
     YalePinError,
@@ -57,6 +59,7 @@ from .pin import (
     build_query_pin_packet,
     build_schedule_packet,
     build_set_pin_packet,
+    build_set_rtc_packet,
     check_pin_response_error,
     decode_packed_bcd_pin,
     encode_packed_bcd_pin,
@@ -318,6 +321,34 @@ class YaleLockClient:
 
             return response
 
+    async def set_rtc(
+        self,
+        timestamp: datetime | int | None = None,
+        timeout: float = 20.0,
+    ) -> int:
+        """Synchronize the internal Real-Time Clock (RTC) on the Yale lock.
+
+        Args:
+            timestamp: Optional datetime or Unix epoch timestamp to set. Defaults to now (UTC).
+            timeout: Maximum timeout for the BLE operation in seconds.
+
+        Returns:
+            The Unix epoch timestamp (seconds) programmed onto the lock.
+
+        Raises:
+            YalePinError: If the lock rejects the RTC command or operation fails.
+            TimeoutError: If the BLE operation times out.
+            AuthError: If authentication fails.
+        """
+        _LOGGER.info("Synchronizing RTC clock on %s...", self.address)
+        await self._ensure_started(timeout=timeout)
+        pkt = build_set_rtc_packet(timestamp)
+        ts = struct.unpack("<I", pkt[4:8])[0]
+        resp = await self._execute_raw_command(pkt, "set_rtc", CMD_SET_RTC, timeout=timeout)
+        check_pin_response_error(resp, CMD_SET_RTC)
+        _LOGGER.info("Successfully synchronized RTC clock on %s to %d (UTC).", self.address, ts)
+        return ts
+
     async def add_pin(
         self,
         pin: str,
@@ -325,6 +356,7 @@ class YaleLockClient:
         name: str | None = None,
         valid_from: datetime | None = None,
         valid_to: datetime | None = None,
+        sync_rtc: bool = False,
         timeout: float = 20.0,
     ) -> YalePinCode:
         """Create or update a PIN code in a specific slot on the Yale lock.
@@ -335,6 +367,7 @@ class YaleLockClient:
             name: Optional friendly name for the credential.
             valid_from: Optional starting datetime for validity.
             valid_to: Optional ending datetime for validity.
+            sync_rtc: Whether to synchronize the lock's RTC clock before programming the PIN.
             timeout: Maximum timeout for the entire operation in seconds.
 
         Returns:
@@ -356,6 +389,9 @@ class YaleLockClient:
         _LOGGER.info("Adding PIN to %s (slot %d)...", self.address, slot)
         await self._ensure_started(timeout=timeout)
         step_timeout = max(10.0, timeout / 4.0)
+
+        if sync_rtc:
+            await self.set_rtc(timeout=step_timeout)
 
         # 0. CMD_KEYCODE_CLEAR (0x28) to ensure slot is clean (matches official Yale Home flow)
         clear_pkt = build_clear_pin_packet(slot, pin=pin)

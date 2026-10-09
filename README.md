@@ -85,6 +85,18 @@ snippen-doorman pin delete --slot 3
 snippen-doorman pin list --max-slots 10
 ```
 
+### Hardware RTC Clock Synchronization
+
+Synchronize the internal Real-Time Clock (RTC) on the Yale Access Module directly over BLE (`CMD_SET_RTC` opcode `0x10`):
+
+```bash
+# Synchronize internal lock clock to host system time (UTC)
+snippen-doorman rtc sync
+
+# Synchronize internal lock clock to a specific timestamp
+snippen-doorman rtc sync --time "2026-10-09T14:30:00"
+```
+
 ### Slot Allocation & JIT PIN Provisioning
 
 To avoid conflicts with administrative credentials in the official Yale Home app (which populates slots 0 to 2), `snippen-doorman-service` shields slots 0–2 and allocates guest slots strictly in descending order (slots 9 down to 3). Temporary codes are scheduled in SQLite and provisioned Just-In-Time (JIT) over BLE prior to booking start:

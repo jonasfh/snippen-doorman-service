@@ -290,3 +290,22 @@ def test_pcap_parsing():
     assert len(packets) == 1
     assert packets[0].direction == PacketDirection.HOST_TO_LOCK
     assert packets[0].timestamp_us == 100_000_500
+
+
+def test_format_decrypted_details_rtc():
+    """Test detail string formatting for RTC and timezone opcodes."""
+    from tools.decrypt_ble_snoop import decode_command_details
+
+    payload_rtc = bytearray(18)
+    payload_rtc[0] = 0xEE
+    payload_rtc[1] = 0x10
+    payload_rtc[4:8] = struct.pack("<I", 1791439200)
+    res = decode_command_details(0x10, bytes(payload_rtc))
+    assert "Set RTC Clock" in res
+    assert "1791439200" in res
+
+    payload_tz = bytearray(18)
+    payload_tz[0] = 0xEE
+    payload_tz[1] = 0x30
+    res_tz = decode_command_details(0x30, bytes(payload_tz))
+    assert "Set Timezone" in res_tz

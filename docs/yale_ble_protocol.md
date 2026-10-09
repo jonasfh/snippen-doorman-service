@@ -146,6 +146,10 @@ snippen-doorman pin delete --slot 1
 
 # Liste opp spor:
 snippen-doorman pin list --max-slots 10
+
+# Synkronisere låsens interne RTC-maskinvareklokke (now UTC eller spesifisert tid):
+snippen-doorman rtc sync
+snippen-doorman rtc sync --time 2026-10-09T14:30:00
 ```
 
 ---

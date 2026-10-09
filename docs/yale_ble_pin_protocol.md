@@ -108,12 +108,14 @@ def encode_pin(pin_str: str) -> bytes:
 |---|---|---|---|
 | `0x0A` | `CMD_UNLOCK` | `augLockCmdUnlock` | Låse opp låsen |
 | `0x0B` | `CMD_LOCK` | `augLockCmdLock` | Låse låsen |
+| `0x10` | `CMD_SET_RTC` | `augLockCmdSetRTC` | Synkronisere låsens maskinvare-RTC |
 | `0x27` | `CMD_KEYCODE_SET` | `augLockCmdSetKeypadKey*` | Forhåndsregistrere PIN-verdi |
 | `0x28` | `CMD_KEYCODE_CLEAR` | `augLockCmdClearKeypadKey*` | Slette PIN for en gitt slot |
 | `0x29` | `CMD_KEYCODE_CLEAR_ALL` | `augLockCmdClearAllKeypadKeys` | Slette alle PIN-koder i låsen |
 | `0x2A` | `CMD_KEYCODE_UNLOCK` | `augLockCmdUnlockKey` | Låse opp direkte med PIN over BLE |
 | `0x2B` | `CMD_KEYCODE_ACCESS` | `augLockCmdSetKeypadSchedule*` | Sette tidsplan / gyldighet |
 | `0x2C` | `CMD_KEYCODE_COMMIT` | `augLockCmdCommitKeypad*` | Binde PIN og tidsplan til slot |
+| `0x30` | `CMD_SET_TIMEZONE` | `augLockCmdSetTimeZone` | Sette tidssone for ukentlige koder |
 | `0x39` | `CMD_UNITY_UNITY_GET_KEYCODE`| `augLockGetUnityKeycode` | Hente PIN-informasjon for slot |
 | `0x42` | `CMD_ENTER_CREDENTIAL_LEARN_MODE` | `augLockEnterCredentialLearnMode` | Læremodus for RFID/kort |
 | `0x43` | `CMD_DELETE_CREDENTIAL_COMMAND` | `augLockDeleteCredential` | Generell sletting av credential |
@@ -246,7 +248,28 @@ Kalles via `sendClearAllKeyCodes()`:
 
 ---
 
-## 7. Svarmeldinger og feilkoder fra låsen
+## 7. Maskinvare-RTC og tidssynkronisering (`0x10` - `CMD_SET_RTC`)
+
+Yale Access Module har en intern maskinvare-RTC (Real-Time Clock) som drives kontinuerlig av låsens 4x AA-batterier. Denne klokken lagrer nåværende tid som et standard 32-bits Unix epoch-tidsstempel i sekunder (UTC) og brukes til å validere tidsbegrensede PIN-koder (`0x2B KeyCode_Access`).
+
+Dersom låsen har vært strømløs (f.eks. ved batteribytte), mister modulen tidsreferansen eller restarter fra epoch 0.
+
+### Synkroniseringssekvens:
+I den offisielle Yale Home-appen (`com.aaecosystem.luna.model.Lock` og `BackgroundSyncTask`) leses låsens RTC ved tilkobling via `GetStatus("RTC")`. Dersom avviket overstiger 60 sekunder, sendes `CMD_SET_RTC` (`0x10`) for å oppdatere låsens klokke.
+
+- **Pakkestruktur (18 bytes)**:
+  - Byte `0`: `0xEE`
+  - Byte `1`: `0x10` (`CMD_SET_RTC`)
+  - Byte `2`: `0x00`
+  - Byte `3`: Sjekksum (`(-sum(pkt[:18])) & 0xFF`)
+  - Byte `4..7`: `uint32` little-endian Unix epoch-tidsstempel i sekunder UTC
+  - Byte `8..15`: `0x00` (ubenyttet null-padding)
+  - Byte `16..17`: `0x02, 0x00` (datakanal-indikator)
+- **Svar**: Modulen kvitterer med `0xBB` / `0xAA` og opcode `0x10` (`{"error": "COMM_SUCCESS"}`).
+
+---
+
+## 8. Svarmeldinger og feilkoder fra låsen
 
 ### Svarsynkronisering og headere:
 - `0xBB` / `0xAA`: Gyldig bekreftelse fra modulen (`bb27` for SET, `bb2b` for ACCESS, `bb2c` for COMMIT, `aa28`/`bb28` for CLEAR).
@@ -271,7 +294,7 @@ Dersom en operasjon feiler i modulen, returneres en statuskode:
 
 ---
 
-## 8. Verifisering og dekryptering via Bluetooth HCI Snoop
+## 9. Verifisering og dekryptering via Bluetooth HCI Snoop
 
 For å ettergå protokollen mot reelle data fra Yale Home-appen benyttes verktøyet `tools/decrypt_ble_snoop.py`:
 

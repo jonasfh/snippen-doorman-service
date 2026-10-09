@@ -9,6 +9,7 @@ from snippen_doorman.ble.pin import (
     CMD_KEYCODE_CLEAR,
     CMD_KEYCODE_COMMIT,
     CMD_KEYCODE_SET,
+    CMD_SET_RTC,
     CMD_UNITY_GET_KEYCODE,
     SCHEDULE_ALWAYS,
     SCHEDULE_TEMPORARY,
@@ -19,6 +20,7 @@ from snippen_doorman.ble.pin import (
     build_query_pin_packet,
     build_schedule_packet,
     build_set_pin_packet,
+    build_set_rtc_packet,
     calculate_august_checksum,
     check_pin_response_error,
     decode_packed_bcd_pin,
@@ -126,6 +128,41 @@ def test_packet_builders() -> None:
     assert query_pkt[1] == CMD_UNITY_GET_KEYCODE
     assert query_pkt[4] == 3
     assert (sum(query_pkt) & 0xFF) == 0
+
+
+def test_build_set_rtc_packet() -> None:
+    """Test CMD_SET_RTC (0x10) packet construction with timestamps and checksums."""
+    import struct
+
+    # 1. Default timestamp (now UTC)
+    pkt_default = build_set_rtc_packet()
+    assert len(pkt_default) == 18
+    assert pkt_default[0] == 0xEE
+    assert pkt_default[1] == CMD_SET_RTC
+    assert pkt_default[16:18] == bytes([0x02, 0x00])
+    assert (sum(pkt_default) & 0xFF) == 0
+    ts_default = struct.unpack("<I", pkt_default[4:8])[0]
+    assert ts_default > 1_700_000_000  # valid recent unix timestamp
+
+    # 2. Explicit datetime
+    dt = datetime(2026, 10, 9, 14, 30, 0, tzinfo=UTC)
+    pkt_dt = build_set_rtc_packet(timestamp=dt)
+    assert len(pkt_dt) == 18
+    assert pkt_dt[1] == CMD_SET_RTC
+    assert struct.unpack("<I", pkt_dt[4:8])[0] == int(dt.timestamp())
+    assert (sum(pkt_dt) & 0xFF) == 0
+
+    # 3. Explicit int epoch
+    pkt_int = build_set_rtc_packet(timestamp=1791439200)
+    assert struct.unpack("<I", pkt_int[4:8])[0] == 1791439200
+    assert (sum(pkt_int) & 0xFF) == 0
+
+    # 4. Error cases
+    with pytest.raises(ValueError, match="non-negative"):
+        build_set_rtc_packet(timestamp=-1)
+
+    with pytest.raises(TypeError, match="Invalid timestamp type"):
+        build_set_rtc_packet(timestamp="invalid")  # type: ignore[arg-type]
 
 
 def test_checksum_calculation() -> None:

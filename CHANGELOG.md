@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-09
+
+### Added
+- Hardware RTC clock synchronization protocol support (`CMD_SET_RTC`, opcode `0x10`) for Yale Doorman / Yale Access Module
+- Helper function `build_set_rtc_packet` in `snippen_doorman.ble.pin` building 18-byte August frames with UTC epoch timestamps and valid two's complement checksums
+- Method `set_rtc` and optional `sync_rtc` parameter on `add_pin` in `YaleLockClient` (`snippen_doorman.ble.client`)
+- CLI subcommand `snippen-doorman rtc sync [--time <ISO>]` for syncing lock clock to host system time or explicit ISO timestamp
+- Opcode definitions and frame detail parsing for `0x10` (`CMD_SET_RTC`) and `0x30` (`CMD_SET_TIMEZONE`) in `tools/decrypt_ble_snoop.py`
+- Comprehensive unit tests covering packet generation, client execution, error handling, and CLI command
+
 ## [0.6.0] - 2026-10-08
 
 ### Added

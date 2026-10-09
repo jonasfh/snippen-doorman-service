@@ -7,7 +7,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from snippen_doorman.allocator import SlotAllocator
@@ -165,6 +165,33 @@ async def run_pin_command(
                 print("-" * 30)
         else:
             raise ValueError(f"Unknown PIN action: {action}")
+    finally:
+        await client.disconnect()
+
+
+async def run_rtc_command(
+    action: str,
+    address: str,
+    key: str,
+    slot: int,
+    timestamp: datetime | None = None,
+    timeout: float = 20.0,
+) -> None:
+    """Connect to lock and execute RTC clock management operations."""
+    client = YaleLockClient(address=address, key=key, slot=slot)
+    print(f"Connecting to lock {address} (key slot {slot})...")
+
+    try:
+        if action == "sync":
+            target_ts = timestamp or datetime.now(UTC)
+            print(f"Synchronizing RTC clock with {target_ts.isoformat()}...")
+            synced_ts = await client.set_rtc(timestamp=target_ts, timeout=timeout)
+            dt = datetime.fromtimestamp(synced_ts, tz=UTC)
+            print("\nLock RTC clock synchronized successfully.")
+            print(f"Unix epoch:  {synced_ts}")
+            print(f"UTC time:    {dt.isoformat()}")
+        else:
+            raise ValueError(f"Unknown RTC action: {action}")
     finally:
         await client.disconnect()
 
@@ -401,6 +428,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_conn_args(pin_list_parser, slot_name="key_slot")
 
+    # rtc subcommand
+    rtc_parser = subparsers.add_parser("rtc", help="Manage lock hardware RTC clock")
+    rtc_subparsers = rtc_parser.add_subparsers(dest="rtc_subcommand", help="RTC operations")
+
+    # rtc sync
+    rtc_sync_parser = rtc_subparsers.add_parser(
+        "sync", help="Synchronize the lock's internal RTC clock with current time"
+    )
+    rtc_sync_parser.add_argument(
+        "--time",
+        dest="rtc_time",
+        default=None,
+        help="Optional ISO datetime to set (default: current system time UTC)",
+    )
+    add_common_conn_args(rtc_sync_parser, slot_name="key_slot")
+
     # schedule subcommand
     schedule_parser = subparsers.add_parser(
         "schedule", help="Manage temporary PIN reservations and JIT provisioning"
@@ -542,6 +585,26 @@ def main_cli(argv: list[str] | None = None) -> None:
             )
         except (OSError, RuntimeError, ValueError, YalePinError) as exc:
             logger.error("Error executing pin %s: %s", args.pin_subcommand, exc)
+            sys.exit(1)
+    elif args.subcommand == "rtc":
+        if not args.rtc_subcommand:
+            parser.parse_args(["rtc", "--help"])
+            return
+
+        try:
+            target_time = parse_iso_datetime(getattr(args, "rtc_time", None))
+            asyncio.run(
+                run_rtc_command(
+                    action=args.rtc_subcommand,
+                    address=args.address,
+                    key=args.key,
+                    slot=args.key_slot,
+                    timestamp=target_time,
+                    timeout=args.timeout,
+                )
+            )
+        except (OSError, RuntimeError, ValueError, YalePinError) as exc:
+            logger.error("Error executing rtc %s: %s", args.rtc_subcommand, exc)
             sys.exit(1)
     elif args.subcommand == "schedule":
         if not args.schedule_subcommand:

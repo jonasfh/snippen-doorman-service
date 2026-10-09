@@ -10,7 +10,7 @@ from snippen_doorman.provisioner import (
     run_provisioning_scheduler,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "Database",
