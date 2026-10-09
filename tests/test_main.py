@@ -305,3 +305,123 @@ def test_run_rtc_command(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Capture
                 slot=1,
             )
         )
+
+
+def test_service_parser() -> None:
+    """Test argument parser for service run and sync-once."""
+    parser = build_parser()
+
+    # service run
+    run_args = parser.parse_args(
+        [
+            "service",
+            "run",
+            "--api-url",
+            "https://example.com/wp-json/snippen/v1/door",
+            "--api-token",
+            "secret123",
+            "--interval",
+            "30.0",
+            "--storage",
+            "json",
+            "--json-path",
+            "test_state.json",
+            "--no-auto-pin",
+        ]
+    )
+    assert run_args.subcommand == "service"
+    assert run_args.service_subcommand == "run"
+    assert run_args.api_url == "https://example.com/wp-json/snippen/v1/door"
+    assert run_args.api_token == "secret123"
+    assert run_args.interval == 30.0
+    assert run_args.storage == "json"
+    assert run_args.json_path == "test_state.json"
+    assert run_args.auto_pin is False
+
+    # service sync-once
+    sync_args = parser.parse_args(
+        [
+            "service",
+            "sync-once",
+            "--storage",
+            "sqlite",
+        ]
+    )
+    assert sync_args.subcommand == "service"
+    assert sync_args.service_subcommand == "sync-once"
+    assert sync_args.storage == "sqlite"
+
+
+def test_run_service_command(capsys: pytest.CaptureFixture) -> None:
+    """Test run_service_command execution for sync-once and error handling."""
+    import asyncio
+    from unittest.mock import patch
+
+    from snippen_doorman.main import run_service_command
+    from snippen_doorman.poller import PollTickResult
+
+    mock_result = PollTickResult(
+        added=["101"],
+        updated=[],
+        removed=[],
+        unchanged=["102"],
+        errors=[],
+    )
+
+    with patch("snippen_doorman.main.BookingPoller") as mock_poller_cls:
+        instance = mock_poller_cls.return_value
+        instance.poll_once.return_value = mock_result
+
+        asyncio.run(
+            run_service_command(
+                action="sync-once",
+                api_url="https://example.com",
+                api_token="token",
+                interval_seconds=60.0,
+                timeout_seconds=10.0,
+                storage_type="memory",
+                database_path=":memory:",
+                json_path="",
+                auto_generate_pin=True,
+            )
+        )
+
+        captured = capsys.readouterr()
+        assert "Synchronization Summary" in captured.out
+        assert "Added:     1 (101)" in captured.out
+        assert "Unchanged: 1" in captured.out
+
+    with pytest.raises(ValueError, match="Unknown service action"):
+        asyncio.run(
+            run_service_command(
+                action="invalid_action",
+                api_url="https://example.com",
+                api_token=None,
+                interval_seconds=60.0,
+                timeout_seconds=10.0,
+                storage_type="memory",
+                database_path=":memory:",
+                json_path="",
+            )
+        )
+
+
+def test_main_cli_service_sync_once(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Test main_cli execution of service sync-once."""
+    from unittest.mock import patch
+
+    from snippen_doorman.poller import PollTickResult
+
+    mock_result = PollTickResult(added=["200"], updated=[], removed=[], unchanged=[], errors=[])
+
+    with patch("snippen_doorman.main.BookingPoller") as mock_poller_cls:
+        instance = mock_poller_cls.return_value
+        instance.poll_once.return_value = mock_result
+
+        main_cli(["service", "sync-once", "--storage", "memory"])
+
+        captured = capsys.readouterr()
+        assert "Synchronization Summary" in captured.out
+        assert "Added:     1 (200)" in captured.out

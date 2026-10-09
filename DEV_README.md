@@ -25,24 +25,38 @@ snippen-doorman-service/
 │   └── snippen_doorman/      # Application package
 │       ├── __init__.py       # Package version & exports
 │       ├── allocator.py      # Keypad slot allocation (descending 9->3, shielding 0-2)
+│       ├── booking_client.py # Snippen Booking HTTP REST API client (spec #351)
 │       ├── db.py             # SQLite storage and PinRecord models with audit timestamps
-│       ├── main.py           # Entry point & CLI runner (rtc, pin, and schedule subcommands)
+│       ├── main.py           # Entry point & CLI runner (service, rtc, pin, schedule)
+│       ├── poller.py         # Polling reconciliation engine for Snippen Booking
 │       ├── provisioner.py    # JIT PIN provisioning engine and scheduler daemon
+│       ├── state/            # Pluggable state storage backends
+│       │   ├── base.py       # ReservationStore protocol
+│       │   ├── json_store.py # Lightweight JSON file store (atomic writes)
+│       │   ├── memory_store.py # In-memory store for unit tests
+│       │   ├── models.py     # ReservationRecord, ReservationStatus, and content hashing
+│       │   └── sqlite_store.py # Persistent SQLite store with audit timestamps
 │       └── ble/              # Bluetooth Low Energy modules
 │           ├── discovery.py  # BLE scanner & Yale device identification
 │           ├── pin.py        # PIN/RTC protocol encoding, packet builders & error parsing
 │           └── client.py     # yalexs-ble wrapper for lock operations & PIN management
+├── systemd/                  # systemd service unit templates
+│   └── snippen-doorman.service # Production service definition for Raspberry Pi
 ├── tests/
 │   ├── conftest.py           # Pytest fixtures
 │   ├── test_allocator.py     # SlotAllocator tests
+│   ├── test_booking_client.py # Snippen Booking HTTP client tests
 │   ├── test_client.py        # Lock client tests
 │   ├── test_db.py            # SQLite database and PinRecord tests
 │   ├── test_decrypt_ble_snoop.py # BLE packet decryption tests
 │   ├── test_discovery.py     # BLE discovery tests
+│   ├── test_integration_booking.py # Mock-based end-to-end integration tests
 │   ├── test_main.py          # CLI runner and subcommand tests
 │   ├── test_parse_ha_keys.py # Home Assistant key parser tests
 │   ├── test_pin.py           # PIN protocol and encoding tests
-│   └── test_provisioner.py   # JIT provisioning engine tests
+│   ├── test_poller.py        # Poller reconciliation and diff tests
+│   ├── test_provisioner.py   # JIT provisioning engine tests
+│   └── test_storage.py       # Pluggable storage backend tests
 ├── .dockerignore             # Docker build context exclusions
 ├── Dockerfile                # Production container image definition (Python 3.14-slim)
 ├── pyproject.toml            # Python packaging and dependency config

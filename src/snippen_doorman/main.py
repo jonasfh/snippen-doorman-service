@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,8 +15,11 @@ from snippen_doorman.allocator import SlotAllocator
 from snippen_doorman.ble.client import YaleLockClient
 from snippen_doorman.ble.discovery import discover_yale_devices
 from snippen_doorman.ble.pin import YalePinError
+from snippen_doorman.booking_client import SnippenBookingClient
 from snippen_doorman.db import Database, PinStatus
+from snippen_doorman.poller import BookingPoller
 from snippen_doorman.provisioner import PinProvisioner, run_provisioning_scheduler
+from snippen_doorman.state import create_reservation_store
 
 
 def load_env_file(path: str | Path = ".env") -> None:
@@ -300,6 +304,62 @@ async def run_schedule_command(
             await lock_client.disconnect()
 
 
+async def run_service_command(
+    action: str,
+    api_url: str,
+    api_token: str | None,
+    interval_seconds: float,
+    timeout_seconds: float,
+    storage_type: str,
+    database_path: str,
+    json_path: str,
+    auto_generate_pin: bool = True,
+) -> None:
+    """Run Snippen Booking synchronization service or single tick."""
+    path = database_path if storage_type == "sqlite" else json_path
+    store = create_reservation_store(storage_type=storage_type, path=path)
+    client = SnippenBookingClient(
+        api_url=api_url, api_token=api_token, timeout_seconds=timeout_seconds
+    )
+    poller = BookingPoller(client=client, store=store, auto_generate_pin=auto_generate_pin)
+
+    try:
+        if action == "sync-once":
+            print(f"Executing single synchronization tick against {api_url}...")
+            result = poller.poll_once()
+            print("\n--- Synchronization Summary ---")
+            print(
+                f"Added:     {len(result.added)} ({', '.join(result.added) if result.added else 'none'})"
+            )
+            print(
+                f"Updated:   {len(result.updated)} ({', '.join(result.updated) if result.updated else 'none'})"
+            )
+            print(
+                f"Removed:   {len(result.removed)} ({', '.join(result.removed) if result.removed else 'none'})"
+            )
+            print(f"Unchanged: {len(result.unchanged)}")
+            if result.errors:
+                print(f"Errors:    {len(result.errors)}")
+                for err in result.errors:
+                    print(f"  - {err}")
+        elif action == "run":
+            print(
+                f"Starting Snippen Doorman Service daemon (storage: {storage_type}, interval: {interval_seconds:.1f}s)..."
+            )
+            stop_event = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.add_signal_handler(sig, stop_event.set)
+                except NotImplementedError:
+                    pass
+            await poller.run_loop(interval_seconds=interval_seconds, stop_event=stop_event)
+        else:
+            raise ValueError(f"Unknown service action: {action}")
+    finally:
+        store.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct CLI argument parser."""
     load_env_file()
@@ -529,6 +589,67 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_conn_args(sched_run_parser, slot_name="key_slot", required=False)
 
+    # service subcommand
+    service_parser = subparsers.add_parser(
+        "service", help="Background polling service for Snippen Booking platform"
+    )
+    service_subparsers = service_parser.add_subparsers(
+        dest="service_subcommand", help="Service operations"
+    )
+
+    def add_service_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--api-url",
+            default=os.getenv(
+                "SNIPPEN_DOORMAN_API_URL", "https://vestreholmensameie.no/wp-json/snippen/v1/door"
+            ),
+            help="Snippen Booking REST API URL",
+        )
+        p.add_argument(
+            "--api-token",
+            default=os.getenv("SNIPPEN_DOORMAN_API_TOKEN"),
+            help="Snippen Booking Bearer/API token",
+        )
+        p.add_argument(
+            "--interval",
+            type=float,
+            default=float(os.getenv("SNIPPEN_DOORMAN_SYNC_INTERVAL", "60.0")),
+            help="Polling interval in seconds (default: 60.0)",
+        )
+        p.add_argument(
+            "--timeout",
+            type=float,
+            default=float(os.getenv("SNIPPEN_DOORMAN_SYNC_TIMEOUT", "10.0")),
+            help="API request timeout in seconds (default: 10.0)",
+        )
+        p.add_argument(
+            "--storage",
+            choices=["sqlite", "json", "memory"],
+            default=os.getenv("SNIPPEN_DOORMAN_STORAGE_TYPE", "sqlite"),
+            help="State storage backend (default: sqlite)",
+        )
+        p.add_argument(
+            "--json-path",
+            default=os.getenv("SNIPPEN_DOORMAN_JSON_PATH", "data/reservations.json"),
+            help="Path to JSON state file if using json storage",
+        )
+        p.add_argument(
+            "--auto-pin",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Automatically generate and patch PIN if remote has none (default: True)",
+        )
+
+    # service run
+    service_run_parser = service_subparsers.add_parser("run", help="Run the polling daemon")
+    add_service_args(service_run_parser)
+
+    # service sync-once
+    service_sync_parser = service_subparsers.add_parser(
+        "sync-once", help="Run a single synchronization tick"
+    )
+    add_service_args(service_sync_parser)
+
     return parser
 
 
@@ -634,6 +755,27 @@ def main_cli(argv: list[str] | None = None) -> None:
             )
         except (OSError, RuntimeError, ValueError, KeyError, YalePinError) as exc:
             logger.error("Error executing schedule %s: %s", args.schedule_subcommand, exc)
+            sys.exit(1)
+    elif args.subcommand == "service":
+        action = args.service_subcommand or "run"
+        try:
+            asyncio.run(
+                run_service_command(
+                    action=action,
+                    api_url=args.api_url,
+                    api_token=args.api_token,
+                    interval_seconds=args.interval,
+                    timeout_seconds=args.timeout,
+                    storage_type=args.storage,
+                    database_path=args.database_path,
+                    json_path=args.json_path,
+                    auto_generate_pin=getattr(args, "auto_pin", True),
+                )
+            )
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.error("Error executing service %s: %s", action, exc)
             sys.exit(1)
     else:
         logger.info("Starting Snippen Doorman Service")
