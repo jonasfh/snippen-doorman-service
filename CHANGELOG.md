@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-09
+
+### Added
+- Snippen Booking REST API client (`SnippenBookingClient`) communicating with WordPress endpoint (spec `snippen-booking#351`) using Bearer token authentication and custom error hierarchy
+- Pluggable reservation state storage abstraction (`ReservationStore`) with implementations for SQLite (`SqliteReservationStore`), atomic JSON file (`JsonFileReservationStore`), and in-memory (`InMemoryReservationStore`)
+- Automatic audit timestamps (`created_at`, `modified_at`, `last_seen_at`) and deterministic SHA-256 content hashing (`compute_content_hash`) for change detection
+- Privacy-by-Design reservation model (`ReservationRecord`) tracking only booking ID, validity window, PIN, and status without storing tenant personal identifiable information (PII)
+- Periodic polling and reconciliation engine (`BookingPoller`) detecting new, updated, unchanged, and removed/cancelled reservations with automatic PIN generation and PATCH reporting
+- CLI command `snippen-doorman service run` and `snippen-doorman service sync-once` with signal handling (`SIGINT`, `SIGTERM`)
+- Systemd service template (`systemd/snippen-doorman.service`) for running daemon on Raspberry Pi
+- Mock-based end-to-end integration tests (`tests/test_integration_booking.py`) verifying the entire synchronization lifecycle across SQLite and JSON backends
+
 ## [0.7.0] - 2026-10-09
 
 ### Added

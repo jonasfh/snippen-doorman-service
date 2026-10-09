@@ -132,12 +132,22 @@ python tools/parse_ha_keys.py --log-file ~/Downloads/home-assistant_*.log --outp
 
 ### Start Service
 
-Start the doorman access control service:
+Run the Snippen Booking synchronization service daemon (polling reservations from Snippen Booking, keeping internal state reconciled, and managing automatic PIN code generation):
 
 ```bash
-# Start service using default configuration
-python -m snippen_doorman.main
+# Run service daemon with default SQLite storage
+snippen-doorman service run
 
-# Or run with custom settings
-python -m snippen_doorman.main --log-level DEBUG --database-path data/doorman.db
+# Run service daemon with lightweight JSON storage (ideal for low-resource devices)
+snippen-doorman service run --storage json --json-path data/reservations.json --interval 60
+
+# Run a single synchronization tick and print summary (useful for testing and cron)
+snippen-doorman service sync-once
+
+# Or start daemon directly with custom settings
+python -m snippen_doorman.main service run --log-level DEBUG --interval 30
 ```
+
+### Systemd Service (Raspberry Pi)
+
+A systemd service unit template is available at [`systemd/snippen-doorman.service`](systemd/snippen-doorman.service) for daemon operation on Raspberry Pi.

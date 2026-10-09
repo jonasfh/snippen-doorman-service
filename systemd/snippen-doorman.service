@@ -1,0 +1,25 @@
+[Unit]
+Description=Snippen Doorman Access Control Service
+After=network.target bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/snippen-doorman-service
+EnvironmentFile=-/etc/snippen-doorman/snippen-doorman.env
+ExecStart=/opt/snippen-doorman-service/.venv/bin/snippen-doorman service run
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=15s
+KillSignal=SIGTERM
+
+# Hardening / Sandboxing
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
