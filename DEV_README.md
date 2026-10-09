@@ -26,11 +26,11 @@ snippen-doorman-service/
 │       ├── __init__.py       # Package version & exports
 │       ├── allocator.py      # Keypad slot allocation (descending 9->3, shielding 0-2)
 │       ├── db.py             # SQLite storage and PinRecord models with audit timestamps
-│       ├── main.py           # Entry point & CLI runner (pin and schedule subcommands)
+│       ├── main.py           # Entry point & CLI runner (rtc, pin, and schedule subcommands)
 │       ├── provisioner.py    # JIT PIN provisioning engine and scheduler daemon
 │       └── ble/              # Bluetooth Low Energy modules
 │           ├── discovery.py  # BLE scanner & Yale device identification
-│           ├── pin.py        # PIN protocol encoding, packet builders & error parsing
+│           ├── pin.py        # PIN/RTC protocol encoding, packet builders & error parsing
 │           └── client.py     # yalexs-ble wrapper for lock operations & PIN management
 ├── tests/
 │   ├── conftest.py           # Pytest fixtures

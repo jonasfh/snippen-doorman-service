@@ -51,6 +51,7 @@ OPCODES = {
     0x04: "SEC_HANDSHAKE_LOCK_ACK",
     0x0A: "CMD_UNLOCK",
     0x0B: "CMD_LOCK",
+    0x10: "CMD_SET_RTC",
     0x22: "CMD_KEEP_ALIVE",
     0x27: "CMD_KEYCODE_SET",
     0x28: "CMD_KEYCODE_CLEAR",
@@ -58,6 +59,7 @@ OPCODES = {
     0x2A: "CMD_KEYCODE_UNLOCK",
     0x2B: "CMD_KEYCODE_ACCESS",
     0x2C: "CMD_KEYCODE_COMMIT",
+    0x30: "CMD_SET_TIMEZONE",
     0x39: "CMD_UNITY_GET_KEYCODE",
     0x42: "CMD_ENTER_CREDENTIAL_LEARN_MODE",
     0x43: "CMD_DELETE_CREDENTIAL",
@@ -371,6 +373,14 @@ def decode_command_details(opcode: int, payload: bytes) -> str:
         slot = payload[4] | (payload[5] << 8)
         pin = decode_packed_bcd_pin(payload[6:13])
         return f"Query Slot {slot} (returned PIN='{pin}')"
+
+    if opcode == 0x10:  # CMD_SET_RTC
+        epoch_ts = struct.unpack("<I", payload[4:8])[0]
+        dt_str = datetime.fromtimestamp(epoch_ts, tz=UTC).isoformat() if epoch_ts else "0"
+        return f"Set RTC Clock: {dt_str} (timestamp={epoch_ts})"
+
+    if opcode == 0x30:  # CMD_SET_TIMEZONE
+        return f"Set Timezone (payload={payload[4:12].hex()})"
 
     if opcode == 0x0A:
         return "Command: Unlock Door"

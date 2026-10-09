@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
-# Keypad opcodes
+# Keypad and RTC opcodes
+CMD_SET_RTC = 0x10
 CMD_KEYCODE_SET = 0x27
 CMD_KEYCODE_CLEAR = 0x28
 CMD_KEYCODE_CLEAR_ALL = 0x29
@@ -125,6 +126,31 @@ def build_pin_packet(opcode: int, payload: bytes) -> bytearray:
     pkt[17] = 0x00
     pkt[3] = calculate_august_checksum(pkt)
     return pkt
+
+
+def build_set_rtc_packet(timestamp: datetime | int | None = None) -> bytearray:
+    """Build CMD_SET_RTC (0x10) packet to synchronize the lock's hardware clock.
+
+    Args:
+        timestamp: Optional timestamp as datetime or Unix epoch seconds. Defaults to now (UTC).
+
+    Returns:
+        18-byte command packet with August checksum.
+    """
+    if timestamp is None:
+        ts = int(datetime.now(UTC).timestamp())
+    elif isinstance(timestamp, datetime):
+        ts = int(timestamp.timestamp())
+    elif isinstance(timestamp, int):
+        if timestamp < 0:
+            raise ValueError("Timestamp must be non-negative.")
+        ts = timestamp
+    else:
+        raise TypeError(f"Invalid timestamp type: {type(timestamp)}")
+
+    payload = bytearray(12)
+    payload[0:4] = struct.pack("<I", ts)
+    return build_pin_packet(CMD_SET_RTC, bytes(payload))
 
 
 def build_set_pin_packet(pin: str) -> bytearray:

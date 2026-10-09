@@ -1,6 +1,7 @@
 """Unit tests for YaleLockClient module."""
 
 import asyncio
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -392,5 +393,110 @@ def test_pin_argument_validation() -> None:
 
         with pytest.raises(ValueError, match="Slot"):
             await client.delete_pin(slot=-1)
+
+    asyncio.run(_run())
+
+
+def test_set_rtc_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test successful RTC clock synchronization over BLE."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        sent_commands = []
+
+        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
+            sent_commands.append((name, opcode, cmd))
+            resp = bytearray(18)
+            resp[0] = 0xBB
+            resp[1] = opcode
+            resp[15] = 0x00
+            return bytes(resp)
+
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
+        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+
+        # 1. Default timestamp
+        ts = await client.set_rtc()
+        assert ts > 1_700_000_000
+        assert len(sent_commands) == 1
+        assert sent_commands[0][0] == "set_rtc"
+        assert sent_commands[0][1] == 0x10
+
+        # 2. Explicit timestamp
+        dt = datetime(2026, 10, 9, 15, 0, 0, tzinfo=UTC)
+        ts2 = await client.set_rtc(timestamp=dt)
+        assert ts2 == int(dt.timestamp())
+        assert len(sent_commands) == 2
+        assert sent_commands[1][0] == "set_rtc"
+        assert sent_commands[1][1] == 0x10
+
+    asyncio.run(_run())
+
+
+def test_set_rtc_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test error handling when lock rejects set_rtc."""
+
+    async def _run():
+        from snippen_doorman.ble.pin import YalePinError
+
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
+            resp = bytearray(18)
+            resp[0] = 0xBB
+            resp[1] = opcode
+            resp[15] = 0x05  # KEYCODE_INVALID_ACCESS
+            return bytes(resp)
+
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
+        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+
+        with pytest.raises(YalePinError, match="Lock rejected opcode 0x10"):
+            await client.set_rtc()
+
+    asyncio.run(_run())
+
+
+def test_add_pin_with_sync_rtc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test add_pin with sync_rtc=True executes RTC synchronization first."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        sent_commands = []
+
+        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
+            sent_commands.append((name, opcode))
+            resp = bytearray(18)
+            resp[0] = 0xBB
+            resp[1] = opcode
+            resp[15] = 0x00
+            return bytes(resp)
+
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
+        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+
+        result = await client.add_pin(pin="123456", slot=3, sync_rtc=True)
+        assert result.pin == "123456"
+        assert result.slot == 3
+        assert len(sent_commands) == 5
+        assert sent_commands[0] == ("set_rtc", 0x10)
+        assert sent_commands[1] == ("add_pin_preclear_slot_3", 0x28)
+        assert sent_commands[2] == ("add_pin_set", 0x27)
+        assert sent_commands[3] == ("add_pin_schedule", 0x2B)
+        assert sent_commands[4] == ("add_pin_commit", 0x2C)
 
     asyncio.run(_run())
