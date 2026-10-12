@@ -17,7 +17,8 @@ RUN pip install --no-cache-dir -e .
 RUN mkdir -p /app/data
 
 # Set environment variables
-ENV SNIPPEN_DOORMAN_DATABASE_PATH=/app/data/doorman.db
+ENV PYTHONUNBUFFERED=1 \
+    SNIPPEN_DOORMAN_DATABASE_PATH=/app/data/doorman.db
 
 # Run the service
-CMD ["python", "-m", "snippen_doorman.main"]
+CMD ["snippen-doorman", "service", "run"]

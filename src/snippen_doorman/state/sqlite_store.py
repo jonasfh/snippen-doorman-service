@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self
@@ -26,13 +27,14 @@ class SqliteReservationStore:
         self.db_path = str(db_path)
         if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path)
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
     def _init_schema(self) -> None:
         """Create reservations table and indexes if they do not exist."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS reservations (
@@ -57,26 +59,29 @@ class SqliteReservationStore:
 
     def get_reservation(self, booking_id: str) -> ReservationRecord | None:
         """Fetch a reservation by booking_id."""
-        cursor = self._conn.execute(
-            "SELECT * FROM reservations WHERE booking_id = ?",
-            (str(booking_id).strip(),),
-        )
-        row = cursor.fetchone()
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT * FROM reservations WHERE booking_id = ?",
+                (str(booking_id).strip(),),
+            )
+            row = cursor.fetchone()
         return self._row_to_record(row) if row else None
 
     def list_reservations(
         self, status: ReservationStatus | str | None = None
     ) -> list[ReservationRecord]:
         """List reservation records, optionally filtered by status."""
-        if status is not None:
-            status_val = status.value if isinstance(status, ReservationStatus) else str(status)
-            cursor = self._conn.execute(
-                "SELECT * FROM reservations WHERE status = ? ORDER BY valid_from ASC",
-                (status_val,),
-            )
-        else:
-            cursor = self._conn.execute("SELECT * FROM reservations ORDER BY valid_from ASC")
-        return [self._row_to_record(row) for row in cursor.fetchall()]
+        with self._lock:
+            if status is not None:
+                status_val = status.value if isinstance(status, ReservationStatus) else str(status)
+                cursor = self._conn.execute(
+                    "SELECT * FROM reservations WHERE status = ? ORDER BY valid_from ASC",
+                    (status_val,),
+                )
+            else:
+                cursor = self._conn.execute("SELECT * FROM reservations ORDER BY valid_from ASC")
+            rows = cursor.fetchall()
+        return [self._row_to_record(row) for row in rows]
 
     def save_reservation(self, record: ReservationRecord) -> ReservationRecord:
         """Create and persist a new reservation record."""
@@ -95,7 +100,7 @@ class SqliteReservationStore:
             else str(record.status)
         )
 
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO reservations (
@@ -131,7 +136,7 @@ class SqliteReservationStore:
             else str(record.status)
         )
 
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE reservations
@@ -154,7 +159,7 @@ class SqliteReservationStore:
 
     def delete_reservation(self, booking_id: str) -> bool:
         """Permanently delete a reservation record by booking_id."""
-        with self._conn:
+        with self._lock, self._conn:
             cursor = self._conn.execute(
                 "DELETE FROM reservations WHERE booking_id = ?",
                 (str(booking_id).strip(),),
@@ -177,7 +182,8 @@ class SqliteReservationStore:
 
     def close(self) -> None:
         """Close database connection."""
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def __enter__(self) -> Self:
         return self
