@@ -89,49 +89,51 @@ def main() -> None:
     python_bin = sys.executable
     venv_bin_dir = Path(python_bin).parent
     ruff_bin = venv_bin_dir / "ruff"
-    if not ruff_bin.exists():
+    ruff_found = ruff_bin.exists()
+    if not ruff_found:
         candidate_paths = [
             Path("/home/vscode/.venv/bin/ruff"),
-            Path(shutil.which("ruff") or ""),
-            Path("ruff"),
+            Path(shutil.which("ruff")) if shutil.which("ruff") else None,
         ]
         for candidate in candidate_paths:
             if candidate and candidate.exists():
                 ruff_bin = candidate
+                ruff_found = True
                 break
 
-    try:
-        # Sort imports
-        subprocess.run(
-            [
-                str(ruff_bin),
-                "check",
-                "--select",
-                "I",
-                "--fix",
-                "--exclude",
-                ".agents",
-                str(repo_root),
-            ],
-            check=True,
-            capture_output=True,
-        )
-        # Format code (using py312 target to ensure backward compatibility for parenthesized exceptions)
-        subprocess.run(
-            [
-                str(ruff_bin),
-                "format",
-                "--target-version",
-                "py312",
-                "--exclude",
-                ".agents",
-                str(repo_root),
-            ],
-            check=True,
-            capture_output=True,
-        )
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
+    if ruff_found:
+        try:
+            # Sort imports
+            subprocess.run(
+                [
+                    str(ruff_bin),
+                    "check",
+                    "--select",
+                    "I",
+                    "--fix",
+                    "--exclude",
+                    ".agents",
+                    str(repo_root),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            # Format code (using py312 target to ensure backward compatibility for parenthesized exceptions)
+            subprocess.run(
+                [
+                    str(ruff_bin),
+                    "format",
+                    "--target-version",
+                    "py312",
+                    "--exclude",
+                    ".agents",
+                    str(repo_root),
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except (subprocess.SubprocessError, FileNotFoundError):
+            pass
 
     # 2. Format all text files (strips trailing whitespaces and enforces exactly one EOF newline)
     modified_text_files = format_all_files(repo_root)

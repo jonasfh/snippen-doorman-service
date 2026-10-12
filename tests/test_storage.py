@@ -176,3 +176,36 @@ def test_factory_create_reservation_store(tmp_path):
 
     with pytest.raises(ValueError, match="Unknown storage_type"):
         create_reservation_store("unknown_backend")
+
+
+def test_sqlite_store_cross_thread_access(tmp_path):
+    """Verify SqliteReservationStore can be accessed across different threads (Issue #34)."""
+    import concurrent.futures
+
+    db_file = tmp_path / "cross_thread.db"
+    store = SqliteReservationStore(db_path=db_file)
+
+    now = datetime.now(UTC)
+    record = ReservationRecord(
+        booking_id="thread_res_1",
+        valid_from=now,
+        valid_to=now + timedelta(hours=2),
+        pin="123456",
+        status=ReservationStatus.ACTIVE,
+    )
+
+    # Save in a worker thread
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        saved_rec = executor.submit(store.save_reservation, record).result()
+        assert saved_rec.booking_id == "thread_res_1"
+
+        # Fetch in another worker thread
+        fetched_rec = executor.submit(store.get_reservation, "thread_res_1").result()
+        assert fetched_rec is not None
+        assert fetched_rec.pin == "123456"
+
+        # List in another worker thread
+        listed = executor.submit(store.list_reservations).result()
+        assert len(listed) == 1
+
+    store.close()

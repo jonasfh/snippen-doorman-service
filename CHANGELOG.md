@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-10-12
+
+### Fixed
+- Fixed `sqlite3.ProgrammingError` in `SqliteReservationStore` when accessed across worker threads in `BookingPoller` background loop (`asyncio.to_thread`) by configuring `check_same_thread=False` and protecting database calls with `threading.Lock` (#34).
+- Added cross-thread unit test in `tests/test_storage.py`.
+- Fixed candidate path handling in `scripts/format.py` when `ruff` is not present in PATH.
+
 ## [0.8.0] - 2026-10-09
 
 ### Added
