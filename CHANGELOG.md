@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-10-14
+
+### Added
+- Release packaging utility (`scripts/build_release.py`) to build versioned Python wheels, source distributions, and generate `SHA256SUMS` checksum manifests (#37).
+- Automated Raspberry Pi OS installer (`scripts/install_pi.sh`) setting up system dependencies (`bluez`, `rfkill`, `python3-venv`), service user/group `doorman`, virtualenv in `/opt/snippen-doorman-service/.venv`, environment file with restrictive permissions (`0640`), D-Bus permissions, and systemd service activation (#37, #7).
+- D-Bus policy definition (`systemd/snippen-doorman-dbus.conf`) granting unprivileged service user `doorman` access to BlueZ GATT/adapter APIs over system D-Bus (#7).
+- Systemd hardening and Bluetooth recovery in `systemd/snippen-doorman.service`, including automatic restart (`Restart=on-failure`), sandboxing (`ProtectSystem=full`, `PrivateTmp=true`, `NoNewPrivileges=true`), and pre-start rfkill unblock (`ExecStartPre=-/usr/sbin/rfkill unblock bluetooth`) (#7).
+- Production deployment and troubleshooting guide for Raspberry Pi OS in `docs/raspberry_pi_setup.md` (#7).
+- Multi-door offline key documentation in `docs/yale_offline_key_extraction.md` explaining 1 offline key per door, simultaneous Home Assistant key extraction, and `DOORMAN_LOCKS` configuration.
+- Comprehensive unit tests for `build_release.py` in `tests/test_build_release.py`.
+
 ## [0.9.0] - 2026-10-14
 
 ### Added

@@ -47,7 +47,7 @@ Fremdriften mot produksjon er delt inn i fire tydelige faser for å sikre raskes
 
 ```mermaid
 flowchart LR
-    Fase1["Fase 1: Kjerne-synkronisering\n(#29 & #30)\nPoller + Provisioner + BLE"]
+    Fase1["Fase 1: Kjerne-synkronisering ✅\n(#29 & #30 - Fullført)\nPoller + Provisioner + BLE"]
     Fase2["Fase 2: Pakking & Systemd\n(#37 & #7)\nbuild_release & install_pi.sh"]
     Fase3["Fase 3: BLE WiFi-oppsett\n(#36)\nBlueZ GATT + tools/web-config"]
     Fase4["Fase 4: E2E Verifikasjon\nFysisk test på Snippen"]
@@ -59,9 +59,9 @@ flowchart LR
 
 ---
 
-### Fase 1: Kjerne-synkronisering av reservasjoner mot Yale Doorman
+### Fase 1: Kjerne-synkronisering av reservasjoner mot Yale Doorman (Fullført ✅)
 
-**Tilhørende issues**: [#29](https://github.com/jonasfh/snippen-doorman-service/issues/29) og [#30](https://github.com/jonasfh/snippen-doorman-service/issues/30)
+**Tilhørende issues**: [#29](https://github.com/jonasfh/snippen-doorman-service/issues/29) og [#30](https://github.com/jonasfh/snippen-doorman-service/issues/30) (Merget i PR [#40](https://github.com/jonasfh/snippen-doorman-service/pull/40))
 
 #### Mål:
 Koble sammen `BookingPoller` (som henter fra Snippen Booking API) og `PinProvisioner` (som styrer låsens spor over BLE) i en helhetlig, robust kjørende bakgrunnstjeneste (`snippen-doorman service run`).

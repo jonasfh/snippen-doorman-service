@@ -154,6 +154,23 @@ snippen-doorman service sync-once
 snippen-doorman service sync-once --storage memory
 ```
 
-### Systemd Service (Raspberry Pi)
+### Systemd Service & Raspberry Pi Deployment
 
-A systemd service unit template is available at [`systemd/snippen-doorman.service`](systemd/snippen-doorman.service) for daemon operation on Raspberry Pi.
+For automated deployment on a dedicated Raspberry Pi running Raspberry Pi OS:
+
+```bash
+# 1. Build release distribution packages with checksums
+python scripts/build_release.py
+
+# 2. Run automated installer (creates doorman user, installs venv, systemd unit, and D-Bus policies)
+sudo bash scripts/install_pi.sh dist/snippen_doorman_service-*.whl
+
+# 3. Configure credentials
+sudo nano /etc/snippen-doorman/snippen-doorman.env
+
+# 4. Start service and inspect logs
+sudo systemctl start snippen-doorman
+journalctl -u snippen-doorman -f
+```
+
+See [docs/raspberry_pi_setup.md](docs/raspberry_pi_setup.md) for the comprehensive production deployment and Bluetooth troubleshooting guide.
