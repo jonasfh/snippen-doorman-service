@@ -425,3 +425,30 @@ def test_main_cli_service_sync_once(
         captured = capsys.readouterr()
         assert "Synchronization Summary" in captured.out
         assert "Added:     1 (200)" in captured.out
+
+
+def test_main_cli_service_with_multi_lock(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Test main_cli execution of service sync-once with --locks flag."""
+    from unittest.mock import patch
+
+    from snippen_doorman.poller import PollTickResult
+
+    mock_result = PollTickResult(added=[], updated=[], removed=[], unchanged=[], errors=[])
+
+    with patch("snippen_doorman.main.BookingPoller") as mock_poller_cls:
+        instance = mock_poller_cls.return_value
+        instance.poll_once.return_value = mock_result
+
+        multi_locks = (
+            "ytterdor=AA:BB:CC:DD:EE:01:0123456789abcdef0123456789abcdef:1,"
+            "fellesrom=AA:BB:CC:DD:EE:02:fedcba9876543210fedcba9876543210:2"
+        )
+        main_cli(["service", "sync-once", "--storage", "memory", "--locks", multi_locks])
+
+        captured = capsys.readouterr()
+        assert "Configured locks (2):" in captured.out
+        assert "'ytterdor' [AA:BB:CC:DD:EE:01]" in captured.out
+        assert "'fellesrom' [AA:BB:CC:DD:EE:02]" in captured.out
+        assert "Synchronization Summary" in captured.out
