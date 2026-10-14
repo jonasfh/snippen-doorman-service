@@ -1,14 +1,20 @@
 [Unit]
 Description=Snippen Doorman Access Control Service
-After=network.target bluetooth.target
-Wants=bluetooth.target
+After=network-online.target bluetooth.target
+Wants=network-online.target bluetooth.target
+Documentation=https://github.com/jonasfh/snippen-doorman-service
 
 [Service]
 Type=simple
-User=pi
-Group=pi
+User=doorman
+Group=doorman
+SupplementaryGroups=bluetooth netdev
 WorkingDirectory=/opt/snippen-doorman-service
 EnvironmentFile=-/etc/snippen-doorman/snippen-doorman.env
+
+# Bluetooth adapter recovery pre-check (#7)
+ExecStartPre=-/usr/sbin/rfkill unblock bluetooth
+
 ExecStart=/opt/snippen-doorman-service/.venv/bin/snippen-doorman service run
 Restart=on-failure
 RestartSec=10s
@@ -17,9 +23,11 @@ KillSignal=SIGTERM
 
 # Hardening / Sandboxing
 ProtectSystem=full
-ProtectHome=read-only
+ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
+ProtectControlGroups=true
+ProtectKernelModules=true
 
 [Install]
 WantedBy=multi-user.target

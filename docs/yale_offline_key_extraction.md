@@ -119,8 +119,29 @@ Alternativt kan du åpne loggfilen i en teksteditor og søke manuelt etter `Offl
 }
 ```
 
+### Konfigurasjon for flere dører (1 offline key per dør)
+
+Dersom anlegget har to eller flere dører (f.eks. **ytterdør** og **fellesrom** på Snippen med ca. 5 meters avstand):
+1. Begge låsene knyttes til sameiets driftskonto `post@vestreholmensameie.no` som Eier (*Owner*).
+2. Home Assistant laster automatisk ned `OfflineKeys` for **begge** låsene i samme feilsøkingslogg.
+3. Hver dør har en unik MAC-adresse og en egen 128-bit AES-nøkkel.
+4. I miljøfilen (`.env` eller `/etc/snippen-doorman/snippen-doorman.env`) konfigureres låsene sammen via variabelen `DOORMAN_LOCKS` (eller `SNIPPEN_DOORMAN_LOCKS`):
+
+```bash
+# Format A: Kommaseparert [navn=]adresse:nøkkel:spor
+DOORMAN_LOCKS="ytterdor=AA:BB:CC:DD:EE:01:0123456789abcdef0123456789abcdef:1,fellesrom=AA:BB:CC:DD:EE:02:fedcba9876543210fedcba9876543210:1"
+
+# Format B: JSON-liste
+DOORMAN_LOCKS='[
+  {"name": "ytterdor", "address": "AA:BB:CC:DD:EE:01", "key": "0123456789abcdef0123456789abcdef", "slot": 1},
+  {"name": "fellesrom", "address": "AA:BB:CC:DD:EE:02", "key": "fedcba9876543210fedcba9876543210", "slot": 1}
+]'
+```
+
+Når `snippen-doorman service run` starter, vil én tjeneste-daemon administrere og synkronisere adgangskoder parallelt på begge dørene over Bluetooth LE.
+
 ### Steg 7: Rydd opp Home Assistant-containeren
-Når nøkkelen er lagret i `.env`, stopper og fjerner du den midlertidige containeren:
+Når nøklene er lagret i `.env`, stopper og fjerner du den midlertidige containeren:
 
 ```bash
 docker stop ha-key-extractor && docker rm ha-key-extractor

@@ -16,7 +16,9 @@ snippen-doorman-service/
 │   └── production_roadmap.md # Production roadmap and implementation plan
 ├── firmware/                 # Embedded or hardware integration code (optional)
 ├── scripts/                  # Development & formatting utilities
+│   ├── build_release.py      # Release packaging and SHA-256 checksum generation tool
 │   ├── format.py             # Whitespace & file formatting tool
+│   ├── install_pi.sh         # Automated installer script for Raspberry Pi
 │   └── validate_pr.py        # PR SemVer & changelog validation tool
 ├── tools/                    # Companion configuration and testing tools
 │   ├── decrypt_ble_snoop.py  # Decrypt Yale Doorman BLE sessions from btsnoop logs / bugreports
@@ -31,6 +33,7 @@ snippen-doorman-service/
 │       ├── main.py           # Entry point & CLI runner (service, rtc, pin, schedule)
 │       ├── poller.py         # Polling reconciliation engine for Snippen Booking
 │       ├── provisioner.py    # JIT PIN provisioning engine and scheduler daemon
+│       ├── sync.py           # Full sync engine connecting poller, storage, and provisioner
 │       ├── state/            # Pluggable state storage backends
 │       │   ├── base.py       # ReservationStore protocol
 │       │   ├── json_store.py # Lightweight JSON file store (atomic writes)
@@ -39,10 +42,12 @@ snippen-doorman-service/
 │       │   └── sqlite_store.py # Persistent SQLite store with audit timestamps
 │       └── ble/              # Bluetooth Low Energy modules
 │           ├── discovery.py  # BLE scanner & Yale device identification
+│           ├── lock_config.py # Multi-lock configuration parser
 │           ├── pin.py        # PIN/RTC protocol encoding, packet builders & error parsing
 │           └── client.py     # yalexs-ble wrapper for lock operations & PIN management
 ├── systemd/                  # systemd service unit templates
-│   └── snippen-doorman.service # Production service definition for Raspberry Pi
+│   ├── snippen-doorman.service # Production service definition for Raspberry Pi
+│   └── snippen-doorman-dbus.conf # D-Bus permissions for unprivileged BlueZ access
 ├── tests/
 │   ├── conftest.py           # Pytest fixtures
 │   ├── test_allocator.py     # SlotAllocator tests
@@ -95,4 +100,13 @@ For high-level system architecture, communication flows, and boundaries, see [do
 
    # Validate PR version bump and changelog
    python scripts/validate_pr.py --base origin/main
+   ```
+
+5. **Release Packaging & Raspberry Pi Deployment**:
+   ```bash
+   # Build pure-Python wheel and source distribution with SHA-256 checksums
+   python scripts/build_release.py
+
+   # Automated installation on target Raspberry Pi OS (see docs/raspberry_pi_setup.md)
+   sudo bash scripts/install_pi.sh dist/snippen_doorman_service-*.whl
    ```
