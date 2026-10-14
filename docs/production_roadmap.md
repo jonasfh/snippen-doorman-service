@@ -17,7 +17,7 @@ graph TD
         WB["Admin Web Bluetooth UI\n(tools/web-config)\nMobil / PC nettleser"]
     end
 
-    subgraph Raspberry Pi Gateway (Snippen Doorman Service)
+    subgraph "Raspberry Pi Gateway (Snippen Doorman Service)"
         BP["BookingPoller\n- Henter reservasjoner\n- Patcher autogenerert PIN"]
         SYNC["Synkroniseringsmotor (#29)\n- Beslutningslogikk\n- Endringsdeteksjon"]
         PP["PinProvisioner / SlotAllocator\n- JIT-tidsstyring (1-2t før)\n- Spor 9..3 allokering"]

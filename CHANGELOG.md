@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-14
+
+### Added
+- Core synchronization engine (`DoormanSyncEngine`) coordinating booking polling (`BookingPoller`), state storage (`ReservationStore`), and keypad slot provisioning (`PinProvisioner`) into an end-to-end background daemon (#29, #30).
+- Sleep and battery preservation logic for Yale Doorman: unchanged reservations trigger zero BLE communication, leaving battery-powered locks in deep sleep mode (#29).
+- Time-controlled JIT activation window (`--lead-time`, default 60 min) ensuring PINs are only programmed onto the lock when entering the active access window (#29).
+- Dynamic change detection and in-place lock code updating (`PENDING_UPDATE`) when booking PIN or validity timeframe is modified in WordPress (#29, #30).
+- Rescheduling detection: bookings moved outside the active access window to the future are automatically deprovisioned from the lock, returning the keypad slot to the pool (#29, #30).
+- Immediate revocation and deprovisioning (`PENDING_REVOKE`) when bookings are cancelled or removed from the remote platform (#29, #30).
+- Resilient BLE error handling: temporary lock unavailability or timeouts do not lose desired state; transactions retry on subsequent polling cycles (#30).
+- Opportunistic telemetry recording: lock battery percentage and door/lock status are automatically captured and persisted in SQLite `lock_status` table upon connection (#30).
+- Opportunistic RTC clock synchronization: internal Real-Time Clock on Yale Doorman locks is synchronized (`sync_rtc=True`) during PIN programming with zero extra BLE connection overhead (#30).
+- Multi-lock management (`LockConfig`, `parse_lock_configs`, `--locks`, `SNIPPEN_DOORMAN_LOCKS`): simultaneously administers multiple locks (e.g. 2 doors on Snippen) from a single service instance (#30).
+- Updated CLI commands `snippen-doorman service run` and `snippen-doorman service sync-once` supporting multi-lock configurations, lead time, grace period, and detailed execution summaries.
+
 ## [0.8.1] - 2026-10-12
 
 ### Fixed

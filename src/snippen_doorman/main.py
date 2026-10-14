@@ -14,12 +14,14 @@ from pathlib import Path
 from snippen_doorman.allocator import SlotAllocator
 from snippen_doorman.ble.client import YaleLockClient
 from snippen_doorman.ble.discovery import discover_yale_devices
+from snippen_doorman.ble.lock_config import parse_lock_configs
 from snippen_doorman.ble.pin import YalePinError
 from snippen_doorman.booking_client import SnippenBookingClient
 from snippen_doorman.db import Database, PinStatus
 from snippen_doorman.poller import BookingPoller
 from snippen_doorman.provisioner import PinProvisioner, run_provisioning_scheduler
 from snippen_doorman.state import create_reservation_store
+from snippen_doorman.sync import DoormanSyncEngine
 
 
 def load_env_file(path: str | Path = ".env") -> None:
@@ -314,37 +316,104 @@ async def run_service_command(
     database_path: str,
     json_path: str,
     auto_generate_pin: bool = True,
+    address: str | None = None,
+    key: str | None = None,
+    key_slot: int = 1,
+    lead_time_minutes: int = 60,
+    grace_period_minutes: int = 15,
+    guest_slot_min: int = 3,
+    guest_slot_max: int = 9,
+    locks: str | None = None,
 ) -> None:
     """Run Snippen Booking synchronization service or single tick."""
     path = database_path if storage_type == "sqlite" else json_path
     store = create_reservation_store(storage_type=storage_type, path=path)
+    db = Database(database_path if storage_type != "memory" else ":memory:")
+    allocator = SlotAllocator(min_slot=guest_slot_min, max_slot=guest_slot_max)
+
+    lock_configs = parse_lock_configs(
+        locks_val=locks,
+        default_address=address,
+        default_key=key,
+        default_slot=key_slot,
+    )
+    lock_clients = [
+        YaleLockClient(
+            address=cfg.address,
+            key=cfg.key,
+            slot=cfg.slot,
+            local_name=cfg.name,
+        )
+        for cfg in lock_configs
+    ]
+
+    provisioner = PinProvisioner(
+        db=db,
+        allocator=allocator,
+        lock_clients=lock_clients,
+        lead_time=timedelta(minutes=lead_time_minutes),
+        grace_period=timedelta(minutes=grace_period_minutes),
+        sync_rtc=True,
+    )
+
     client = SnippenBookingClient(
         api_url=api_url, api_token=api_token, timeout_seconds=timeout_seconds
     )
     poller = BookingPoller(client=client, store=store, auto_generate_pin=auto_generate_pin)
+    sync_engine = DoormanSyncEngine(poller=poller, provisioner=provisioner, store=store, db=db)
 
     try:
         if action == "sync-once":
-            print(f"Executing single synchronization tick against {api_url}...")
-            result = poller.poll_once()
+            print(f"Executing synchronization cycle against {api_url}...")
+            if lock_clients:
+                lock_names = ", ".join(f"'{cfg.name}' [{cfg.address}]" for cfg in lock_configs)
+                print(f"Configured locks ({len(lock_clients)}): {lock_names}")
+            else:
+                print("No BLE locks configured (dry-run/offline provisioning mode).")
+
+            result = await sync_engine.sync_once()
             print("\n--- Synchronization Summary ---")
             print(
-                f"Added:     {len(result.added)} ({', '.join(result.added) if result.added else 'none'})"
+                f"Added:     {len(result.poll.added)} ({', '.join(result.poll.added) if result.poll.added else 'none'})"
             )
             print(
-                f"Updated:   {len(result.updated)} ({', '.join(result.updated) if result.updated else 'none'})"
+                f"Updated:   {len(result.poll.updated)} ({', '.join(result.poll.updated) if result.poll.updated else 'none'})"
             )
             print(
-                f"Removed:   {len(result.removed)} ({', '.join(result.removed) if result.removed else 'none'})"
+                f"Removed:   {len(result.poll.removed)} ({', '.join(result.poll.removed) if result.poll.removed else 'none'})"
             )
-            print(f"Unchanged: {len(result.unchanged)}")
+            print(f"Unchanged: {len(result.poll.unchanged)}")
+
+            print("\n--- Lock Provisioning Summary ---")
+            print(
+                f"Activated:     {len(result.provision.activated)} ({', '.join(result.provision.activated) if result.provision.activated else 'none'})"
+            )
+            print(
+                f"Updated PINs:  {len(result.provision.updated)} ({', '.join(result.provision.updated) if result.provision.updated else 'none'})"
+            )
+            print(
+                f"Deprovisioned: {len(result.provision.deprovisioned)} ({', '.join(result.provision.deprovisioned) if result.provision.deprovisioned else 'none'})"
+            )
+            print(f"Scheduled:     {len(result.scheduled)}")
+
+            for cfg in lock_configs:
+                status_rec = db.get_lock_status(cfg.address)
+                if status_rec:
+                    batt_str = f"{status_rec.battery}%" if status_rec.battery is not None else "N/A"
+                    print(f"\nLock [{cfg.name} - {cfg.address}]:")
+                    print(f"  Lock Status:   {status_rec.lock_status or 'N/A'}")
+                    print(f"  Door Status:   {status_rec.door_status or 'N/A'}")
+                    print(f"  Battery:       {batt_str}")
+
             if result.errors:
-                print(f"Errors:    {len(result.errors)}")
+                print(f"\nErrors:    {len(result.errors)}")
                 for err in result.errors:
                     print(f"  - {err}")
+
         elif action == "run":
+            lock_info = f"{len(lock_clients)} lock(s)" if lock_clients else "no BLE lock configured"
             print(
-                f"Starting Snippen Doorman Service daemon (storage: {storage_type}, interval: {interval_seconds:.1f}s)..."
+                f"Starting Snippen Doorman Service daemon (storage: {storage_type}, interval: {interval_seconds:.1f}s, {lock_info})..."
             )
             stop_event = asyncio.Event()
             loop = asyncio.get_running_loop()
@@ -353,11 +422,14 @@ async def run_service_command(
                     loop.add_signal_handler(sig, stop_event.set)
                 except NotImplementedError:
                     pass
-            await poller.run_loop(interval_seconds=interval_seconds, stop_event=stop_event)
+            await sync_engine.run_loop(interval_seconds=interval_seconds, stop_event=stop_event)
         else:
             raise ValueError(f"Unknown service action: {action}")
     finally:
+        for lc in lock_clients:
+            await lc.disconnect()
         store.close()
+        db.close()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -390,6 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
         p: argparse.ArgumentParser,
         slot_name: str = "slot",
         required: bool = True,
+        include_timeout: bool = True,
     ) -> None:
         is_req = required and env_address is None
         p.add_argument(
@@ -419,12 +492,13 @@ def build_parser() -> argparse.ArgumentParser:
                 default=env_slot,
                 help=f"Offline key slot index (default: {env_slot})",
             )
-        p.add_argument(
-            "--timeout",
-            type=float,
-            default=20.0,
-            help="Operation timeout in seconds (default: 20.0)",
-        )
+        if include_timeout:
+            p.add_argument(
+                "--timeout",
+                type=float,
+                default=20.0,
+                help="Operation timeout in seconds (default: 20.0)",
+            )
 
     # status subcommand
     status_parser = subparsers.add_parser("status", help="Get current status of a Yale lock")
@@ -639,6 +713,46 @@ def build_parser() -> argparse.ArgumentParser:
             default=True,
             help="Automatically generate and patch PIN if remote has none (default: True)",
         )
+        p.add_argument(
+            "--lead-time",
+            type=int,
+            default=int(
+                os.getenv(
+                    "SNIPPEN_PIN_LEAD_TIME_MINUTES",
+                    os.getenv("SNIPPEN_LEAD_TIME_MINUTES", "60"),
+                )
+            ),
+            help="Lead time in minutes before booking start (default: 60)",
+        )
+        p.add_argument(
+            "--grace-period",
+            type=int,
+            default=int(
+                os.getenv(
+                    "SNIPPEN_PIN_GRACE_PERIOD_MINUTES",
+                    os.getenv("SNIPPEN_GRACE_PERIOD_MINUTES", "15"),
+                )
+            ),
+            help="Grace period in minutes after booking end (default: 15)",
+        )
+        p.add_argument(
+            "--guest-slot-min",
+            type=int,
+            default=int(os.getenv("SNIPPEN_GUEST_SLOT_MIN", "3")),
+            help="Lowest keypad guest slot (default: 3)",
+        )
+        p.add_argument(
+            "--guest-slot-max",
+            type=int,
+            default=int(os.getenv("SNIPPEN_GUEST_SLOT_MAX", "9")),
+            help="Highest keypad guest slot (default: 9)",
+        )
+        p.add_argument(
+            "--locks",
+            default=os.getenv("SNIPPEN_DOORMAN_LOCKS"),
+            help="Multi-lock configuration (JSON string or comma-separated list)",
+        )
+        add_common_conn_args(p, slot_name="key_slot", required=False, include_timeout=False)
 
     # service run
     service_run_parser = service_subparsers.add_parser("run", help="Run the polling daemon")
@@ -770,6 +884,14 @@ def main_cli(argv: list[str] | None = None) -> None:
                     database_path=args.database_path,
                     json_path=args.json_path,
                     auto_generate_pin=getattr(args, "auto_pin", True),
+                    address=getattr(args, "address", None),
+                    key=getattr(args, "key", None),
+                    key_slot=getattr(args, "key_slot", 1),
+                    lead_time_minutes=getattr(args, "lead_time", 60),
+                    grace_period_minutes=getattr(args, "grace_period", 15),
+                    guest_slot_min=getattr(args, "guest_slot_min", 3),
+                    guest_slot_max=getattr(args, "guest_slot_max", 9),
+                    locks=getattr(args, "locks", None),
                 )
             )
         except (KeyboardInterrupt, SystemExit):

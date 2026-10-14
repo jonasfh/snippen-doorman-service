@@ -131,22 +131,27 @@ python tools/parse_ha_keys.py --log-file ~/Downloads/home-assistant_*.log
 python tools/parse_ha_keys.py --log-file ~/Downloads/home-assistant_*.log --output-env .env
 ```
 
-### Start Service
+### Start Service & End-to-End Synchronization
 
-Run the Snippen Booking synchronization service daemon (polling reservations from Snippen Booking, keeping internal state reconciled, and managing automatic PIN code generation):
+`snippen-doorman service run` runs the full end-to-end synchronization engine (`DoormanSyncEngine`) combining:
+1. `BookingPoller`: Polling `snippen-booking` REST API, generating 6-digit PIN codes if none exist, and reporting PINs back via PATCH.
+2. `DoormanSyncEngine`: Change detection and battery-saving sleep logic (#29). Unchanged reservations produce zero BLE communication.
+3. `PinProvisioner` & `SlotAllocator`: Just-In-Time (JIT) slot management (guest slots 9 down to 3) within configurable lead time (`--lead-time`, default 60m).
+4. `YaleLockClient`: Encrypted Bluetooth LE communication programming PIN codes and opportunistically synchronizing lock RTC clocks (`sync_rtc=True`) and capturing battery telemetry (#30).
+5. **Multi-lock support**: Manage single lock or multiple locks simultaneously (e.g. ytterdør + fellesrom) with `--locks` or `SNIPPEN_DOORMAN_LOCKS`.
 
 ```bash
-# Run service daemon with default SQLite storage
+# Run service daemon with configured locks and default SQLite storage
 snippen-doorman service run
 
-# Run service daemon with lightweight JSON storage (ideal for low-resource devices)
-snippen-doorman service run --storage json --json-path data/reservations.json --interval 60
+# Run with multiple locks simultaneously (e.g. 2 doors on Snippen)
+snippen-doorman service run --locks "ytterdor=AA:BB:CC:DD:EE:01:KEY1:1,fellesrom=AA:BB:CC:DD:EE:02:KEY2:1"
 
-# Run a single synchronization tick and print summary (useful for testing and cron)
+# Run a single synchronization tick and print detailed summary (polling + lock provisioning + telemetry)
 snippen-doorman service sync-once
 
-# Or start daemon directly with custom settings
-python -m snippen_doorman.main service run --log-level DEBUG --interval 30
+# Dry-run / offline mode without physical BLE lock
+snippen-doorman service sync-once --storage memory
 ```
 
 ### Systemd Service (Raspberry Pi)
