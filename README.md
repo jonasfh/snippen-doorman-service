@@ -18,6 +18,7 @@ A Python service for managing temporary access codes and administrative control 
 ## Documentation
 
 - 📚 **[Documentation Overview](docs/README.md)**: Index of all documentation resources.
+- 🚀 **[Production Roadmap](docs/production_roadmap.md)**: Veikart og implementeringsplan for produksjonssetting på Raspberry Pi.
 - 📐 **[System Architecture & Design](docs/architecture.md)**: High-level architectural design, system boundaries, and design principles.
 - 📡 **[Yale Doorman BLE Protocol](docs/yale_ble_protocol.md)**: BLE discovery, authentication, session establishment, and status inspection findings.
 - 🔑 **[Yale Offline Key Extraction](docs/yale_offline_key_extraction.md)**: Extracting offline BLE keys and setting up dedicated admin account.
