@@ -12,7 +12,8 @@ snippen-doorman-service/
 ├── .agents/                  # Agent guidelines (Architecture, Testing, common-agent-instructions submodule)
 ├── docs/                     # System documentation & architecture guides
 │   ├── README.md             # Documentation overview
-│   └── architecture.md       # High-level architecture and design principles
+│   ├── architecture.md       # High-level architecture and design principles
+│   └── production_roadmap.md # Production roadmap and implementation plan
 ├── firmware/                 # Embedded or hardware integration code (optional)
 ├── scripts/                  # Development & formatting utilities
 │   ├── format.py             # Whitespace & file formatting tool
