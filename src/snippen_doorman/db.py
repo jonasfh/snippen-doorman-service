@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -79,15 +80,16 @@ class Database:
     def __init__(self, db_path: str | Path = "data/doorman.db") -> None:
         """Initialize database connection and ensure tables exist."""
         self.db_path = str(db_path)
+        self._lock = threading.Lock()
         if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path)
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
     def _init_schema(self) -> None:
         """Create database tables and indexes if they do not exist."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS pins (
@@ -133,16 +135,21 @@ class Database:
 
     def record_lock_status(
         self,
-        lock_address: str,
+        lock_address: str | None = None,
         lock_status: str | None = None,
         door_status: str | None = None,
         battery: int | None = None,
+        *,
+        address: str | None = None,
     ) -> LockStatusRecord:
         """Opportunistically record lock telemetry (status, door, battery)."""
+        addr = lock_address or address
+        if not addr:
+            raise ValueError("lock_address or address is required.")
         now_utc = datetime.now(UTC)
         now_str = _format_datetime(now_utc)
-        clean_addr = lock_address.strip()
-        with self._conn:
+        clean_addr = addr.strip()
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO lock_status (lock_address, lock_status, door_status, battery, created_at, modified_at)
@@ -164,13 +171,16 @@ class Database:
             modified_at=now_utc,
         )
 
+    update_lock_status = record_lock_status
+
     def get_lock_status(self, lock_address: str) -> LockStatusRecord | None:
         """Get the latest recorded status for a lock."""
-        cursor = self._conn.execute(
-            "SELECT * FROM lock_status WHERE lock_address = ?",
-            (lock_address.strip(),),
-        )
-        row = cursor.fetchone()
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT * FROM lock_status WHERE lock_address = ?",
+                (lock_address.strip(),),
+            )
+            row = cursor.fetchone()
         if not row:
             return None
         return LockStatusRecord(
@@ -219,7 +229,7 @@ class Database:
 
         status_val = status.value if isinstance(status, PinStatus) else str(status)
 
-        with self._conn:
+        with self._lock, self._conn:
             cursor = self._conn.execute(
                 """
                 INSERT INTO pins (booking_id, lock_id, slot, pin, status, valid_from, valid_to, created_at, modified_at)
@@ -254,26 +264,28 @@ class Database:
 
     def get_pin(self, booking_id: str, lock_id: str | None = None) -> PinRecord | None:
         """Fetch a PIN record by booking_id and optional lock_id."""
-        if lock_id is not None:
-            cursor = self._conn.execute(
-                "SELECT * FROM pins WHERE booking_id = ? AND lock_id = ?",
-                (booking_id.strip(), lock_id.strip()),
-            )
-        else:
-            cursor = self._conn.execute(
-                "SELECT * FROM pins WHERE booking_id = ?",
-                (booking_id.strip(),),
-            )
-        row = cursor.fetchone()
+        with self._lock:
+            if lock_id is not None:
+                cursor = self._conn.execute(
+                    "SELECT * FROM pins WHERE booking_id = ? AND lock_id = ?",
+                    (booking_id.strip(), lock_id.strip()),
+                )
+            else:
+                cursor = self._conn.execute(
+                    "SELECT * FROM pins WHERE booking_id = ?",
+                    (booking_id.strip(),),
+                )
+            row = cursor.fetchone()
         return self._row_to_record(row) if row else None
 
     def get_pin_by_id(self, pin_id: int) -> PinRecord | None:
         """Fetch a PIN record by internal primary key."""
-        cursor = self._conn.execute(
-            "SELECT * FROM pins WHERE id = ?",
-            (pin_id,),
-        )
-        row = cursor.fetchone()
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT * FROM pins WHERE id = ?",
+                (pin_id,),
+            )
+            row = cursor.fetchone()
         return self._row_to_record(row) if row else None
 
     def list_pins(
@@ -298,8 +310,10 @@ class Database:
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY valid_from ASC"
 
-        cursor = self._conn.execute(query, tuple(params))
-        return [self._row_to_record(row) for row in cursor.fetchall()]
+        with self._lock:
+            cursor = self._conn.execute(query, tuple(params))
+            rows = cursor.fetchall()
+        return [self._row_to_record(row) for row in rows]
 
     def update_pin(self, record: PinRecord) -> PinRecord:
         """Update an existing PIN record and refresh its modified_at timestamp."""
@@ -312,7 +326,7 @@ class Database:
             record.status.value if isinstance(record.status, PinStatus) else str(record.status)
         )
 
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE pins
@@ -336,7 +350,7 @@ class Database:
 
     def delete_pin(self, booking_id: str, lock_id: str | None = None) -> bool:
         """Permanently delete a record by booking_id and optional lock_id."""
-        with self._conn:
+        with self._lock, self._conn:
             if lock_id is not None:
                 cursor = self._conn.execute(
                     "DELETE FROM pins WHERE booking_id = ? AND lock_id = ?",
@@ -368,7 +382,8 @@ class Database:
 
     def close(self) -> None:
         """Close database connection."""
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def __enter__(self) -> Self:
         return self

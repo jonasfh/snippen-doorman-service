@@ -71,13 +71,14 @@ class DoormanWebServer:
         self.port = port
         self.config_manager = config_manager or ConfigManager()
         self.sync_engine = sync_engine
-        self.db = db
+        self.db = db or Database()
         self.gpio_handler = gpio_handler
         self.wifi_manager = wifi_manager or WifiManager()
         self.ble_peripheral = ble_peripheral
         self.event_loop = event_loop
         self.start_time = datetime.now(UTC)
 
+        self._lock_status_cache: dict[str, dict[str, Any]] = {}
         self._events: deque[dict[str, str]] = deque(maxlen=40)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -197,6 +198,11 @@ class DoormanWebServer:
                                     if status_rec.last_seen
                                     else None
                                 )
+                        cached = parent._lock_status_cache.get(lk.address)
+                        if cached:
+                            for k, v in cached.items():
+                                if v is not None:
+                                    primary_lock_info[k] = v
 
                     wifi_status = parent.wifi_manager.get_status()
                     ble_active = parent.ble_peripheral.is_active if parent.ble_peripheral else False
@@ -263,10 +269,73 @@ class DoormanWebServer:
 
                         res = parent.run_coroutine(_unlock(), timeout=25.0)
                         parent.record_event(f"Lås {lk.name} låst opp!")
-                        self._send_json(200, {"success": True, "lock_status": res.lock_status})
+                        parent._lock_status_cache[lk.address] = {
+                            "battery": res.battery,
+                            "lock_status": res.lock_status,
+                            "door_status": res.door_status,
+                        }
+                        if parent.db:
+                            parent.db.record_lock_status(
+                                lock_address=lk.address,
+                                battery=res.battery,
+                                lock_status=res.lock_status,
+                                door_status=res.door_status,
+                            )
+                        self._send_json(
+                            200,
+                            {
+                                "success": True,
+                                "battery": res.battery,
+                                "lock_status": res.lock_status,
+                                "door_status": res.door_status,
+                            },
+                        )
                     except Exception as exc:
                         logger.exception("Feil under opplåsing")
                         parent.record_event(f"Opplåsing feilet: {exc}")
+                        self._send_json(500, {"success": False, "error": str(exc)})
+                    return
+
+                if self.path == "/api/test/lock":
+                    cfg = parent.config_manager.load_config()
+                    if not cfg.locks:
+                        self._send_json(400, {"error": "Ingen dørlås konfigurert"})
+                        return
+                    lk = cfg.locks[0]
+                    parent.record_event(f"Sender test-låsesignal til {lk.name}...")
+                    try:
+                        client = YaleLockClient(address=lk.address, key=lk.key, slot=lk.slot)
+
+                        async def _lock() -> Any:
+                            async with client:
+                                return await client.lock(timeout=20.0)
+
+                        res = parent.run_coroutine(_lock(), timeout=25.0)
+                        parent.record_event(f"Lås {lk.name} låst!")
+                        parent._lock_status_cache[lk.address] = {
+                            "battery": res.battery,
+                            "lock_status": res.lock_status,
+                            "door_status": res.door_status,
+                        }
+                        if parent.db:
+                            parent.db.record_lock_status(
+                                lock_address=lk.address,
+                                battery=res.battery,
+                                lock_status=res.lock_status,
+                                door_status=res.door_status,
+                            )
+                        self._send_json(
+                            200,
+                            {
+                                "success": True,
+                                "battery": res.battery,
+                                "lock_status": res.lock_status,
+                                "door_status": res.door_status,
+                            },
+                        )
+                    except Exception as exc:
+                        logger.exception("Feil under låsing")
+                        parent.record_event(f"Låsing feilet: {exc}")
                         self._send_json(500, {"success": False, "error": str(exc)})
                     return
 
@@ -285,9 +354,14 @@ class DoormanWebServer:
                                 return await client.get_status(timeout=20.0)
 
                         res = parent.run_coroutine(_get_status(), timeout=25.0)
+                        parent._lock_status_cache[lk.address] = {
+                            "battery": res.battery,
+                            "lock_status": res.lock_status,
+                            "door_status": res.door_status,
+                        }
                         if parent.db:
-                            parent.db.update_lock_status(
-                                address=lk.address,
+                            parent.db.record_lock_status(
+                                lock_address=lk.address,
                                 battery=res.battery,
                                 lock_status=res.lock_status,
                                 door_status=res.door_status,

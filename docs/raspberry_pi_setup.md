@@ -102,7 +102,27 @@ journalctl -u snippen-doorman -f
 
 ## 5. Bluetooth Recovery og feilsøking (#7)
 
-Dersom Bluetooth-adapteren opplever heng, interferens eller soft-block:
+Dersom Bluetooth-adapteren opplever heng, interferens, feilmeldingen `No powered Bluetooth adapters found. Turn on Bluetooth and try again.`, eller soft-block på en fersk installasjon:
+
+### Manuell aktivering og rettigheter for bruker:
+Når du logger inn som en vanlig bruker (f.eks. `jonas`) og skal teste eller kjøre verktøy direkte:
+
+```bash
+# 1. Fjern rfkill-blokkeringen på Bluetooth
+sudo rfkill unblock bluetooth
+
+# 2. Legg brukeren din til i bluetooth-gruppen (hvis den ikke allerede er det)
+sudo usermod -aG bluetooth $USER
+
+# 3. Start Bluetooth-tjenesten på nytt
+sudo systemctl restart bluetooth
+
+# 4. Slå på radioen i BlueZ
+bluetoothctl power on
+```
+*(Husk å logge ut og inn igjen eller kjøre `newgrp bluetooth` dersom gruppetilhørigheten ble endret i aktiv sesjon).*
+
+### Ytterligere feilsøking og recovery:
 
 1. **Automatisk gjenoppretting**:
    - Systemd-enheten har `ExecStartPre=-/usr/sbin/rfkill unblock bluetooth` og starter automatisk på nytt ved feil (`Restart=on-failure`, `RestartSec=10s`).
