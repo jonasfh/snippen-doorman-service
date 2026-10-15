@@ -19,7 +19,8 @@ snippen-doorman-service/
 │   ├── build_release.py      # Release packaging and SHA-256 checksum generation tool
 │   ├── format.py             # Whitespace & file formatting tool
 │   ├── install_pi.sh         # Automated installer script for Raspberry Pi
-│   └── validate_pr.py        # PR SemVer & changelog validation tool
+│   ├── validate_pr.py        # PR SemVer & changelog validation tool
+│   └── verify_door_sync.py   # Manual verification and interactive integration test tool
 ├── tools/                    # Companion configuration and testing tools
 │   ├── decrypt_ble_snoop.py  # Decrypt Yale Doorman BLE sessions from btsnoop logs / bugreports
 │   ├── fetch_btsnoop.py      # Automated ADB pull and extraction of Bluetooth HCI snoop logs
@@ -31,6 +32,7 @@ snippen-doorman-service/
 │       ├── booking_client.py # Snippen Booking HTTP REST API client (spec #351)
 │       ├── db.py             # SQLite storage and PinRecord models with audit timestamps
 │       ├── main.py           # Entry point & CLI runner (service, rtc, pin, schedule)
+│       ├── mock_server.py    # Embedded mock HTTP server simulating WordPress door API
 │       ├── poller.py         # Polling reconciliation engine for Snippen Booking
 │       ├── provisioner.py    # JIT PIN provisioning engine and scheduler daemon
 │       ├── sync.py           # Full sync engine connecting poller, storage, and provisioner
@@ -62,7 +64,8 @@ snippen-doorman-service/
 │   ├── test_pin.py           # PIN protocol and encoding tests
 │   ├── test_poller.py        # Poller reconciliation and diff tests
 │   ├── test_provisioner.py   # JIT provisioning engine tests
-│   └── test_storage.py       # Pluggable storage backend tests
+│   ├── test_storage.py       # Pluggable storage backend tests
+│   └── test_verify_door_sync.py # Tests for interactive verification script
 ├── .dockerignore             # Docker build context exclusions
 ├── Dockerfile                # Production container image definition (Python 3.14-slim)
 ├── pyproject.toml            # Python packaging and dependency config
@@ -110,3 +113,24 @@ For high-level system architecture, communication flows, and boundaries, see [do
    # Automated installation on target Raspberry Pi OS (see docs/raspberry_pi_setup.md)
    sudo bash scripts/install_pi.sh dist/snippen_doorman_service-*.whl
    ```
+
+6. **Manuell testing og fysisk verifikasjon mot Yale Doorman over BLE**:
+   For å teste synkronisering og fysisk opplåsing med en ekte Yale Doorman for hånden:
+   ```bash
+   # Kjører verifikasjon med parametere fra .env (SNIPPEN_DOORMAN_BLE_ADDRESS, etc.)
+   python scripts/verify_door_sync.py
+
+   # Eller med eksplisitt PIN-kode (f.eks. 123456)
+   python scripts/verify_door_sync.py --pin 123456
+
+   # For å teste logikken offline uten fysisk lås:
+   python scripts/verify_door_sync.py --dry-run
+   ```
+
+   Flyten i skriptet:
+   1. Starter en innebygd mock booking-server med en aktiv reservasjon (eller kobler til ekstern via `--api-url`).
+   2. Kjører `DoormanSyncEngine`: poller bookingen, genererer/oppdaterer PIN, og provisjonerer koden i et ledig gjestespor på låsen (9..3) over BLE.
+   3. Skriver ut PIN og gjestespor i terminalen og pauser.
+   4. Du taster koden på låsens fysiske tastatur og verifiserer at døren låser opp.
+   5. Trykk `[ENTER]` (eller tast `'r'` for å hente batterinivå og status over BLE).
+   6. Skriptet simulerer at reservasjonen er ferdig/slettet, fjerner koden fra låsen over BLE og frigjør sporet.

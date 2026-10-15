@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-15
+
+### Added
+- Interactive integration test and verification script (`scripts/verify_door_sync.py`) for end-to-end hardware-in-the-loop validation of Yale Doorman synchronization over BLE (#42).
+- Embedded mock booking server module (`snippen_doorman.mock_server.MockBookingApiServer`) simulating WordPress Snippen Booking REST API with `GET /bookings` and `PATCH /bookings/:id/code` endpoints (#42).
+- Interactive verification flow with live status feedback: provisions active reservations immediately into guest keypad slots (9..3), pauses for physical door code entry, supports opportunistic telemetry/battery queries (`'r'`), and automatically deprovisions slots and clears PINs upon confirmation (#42).
+- Fail-safe cleanup and `--dry-run` simulation support in `verify_door_sync.py` enabling both offline automated CI execution and hardware safety if aborted mid-test (#42).
+- Unit and automated lifecycle integration tests in `tests/test_verify_door_sync.py` (#42).
+- Updated `DEV_README.md` with manual testing and physical verification instructions (#42).
+
 ## [0.10.0] - 2026-10-14
 
 ### Added
