@@ -22,6 +22,7 @@ Guide AI agents working in this repository.
 ## Self-Improvement & Environment Adaptation
 - **Continuous Agent Guideline Updates**: Whenever an agent experiences friction, environment errors (e.g., sandbox network access for `gh` CLI commands requiring `BypassSandbox: true`, missing CLI tools, unusual log locations, or git ref locks), the agent MUST update `AGENTS.md` and `.agents/` (or `.agents/common-agent-instructions/`) modular guidelines with the discovered workaround or instructions so subsequent agent sessions execute cleanly without repeating trial-and-error.
 - **Dev Container Virtual Environment**: To avoid host OS workspace `.venv` files breaking container execution, Dev Container virtualenvs are located outside the workspace at `/home/vscode/.venv` (configured in `.devcontainer/devcontainer.json` via `python.defaultInterpreterPath`).
+- **Git Status & Submodules**: In workspaces containing git submodules (such as `.agents/common-agent-instructions`), use `git status --ignore-submodules` for immediate execution without latency from recursive submodule checks.
 
 ## Modular Sub-guidelines
 

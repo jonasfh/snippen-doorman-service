@@ -1,116 +1,17 @@
 """End-to-end integration tests using mock Snippen Booking HTTP API (spec #351)."""
 
-import json
-import threading
 from datetime import UTC, datetime, timedelta
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
 from snippen_doorman.booking_client import SnippenBookingClient
+from snippen_doorman.mock_server import MockBookingApiServer
 from snippen_doorman.poller import BookingPoller
 from snippen_doorman.state import (
     JsonFileReservationStore,
     ReservationStatus,
     SqliteReservationStore,
 )
-
-
-class MockBookingApiServer:
-    """Mock HTTP server simulating WordPress Snippen Booking API (spec #351)."""
-
-    def __init__(self, token: str = "valid-secret-token") -> None:
-        self.token = token
-        self.bookings: list[dict] = []
-        self.patch_calls: list[dict] = []
-        self.status_code = 200
-        self.server: HTTPServer | None = None
-        self.thread: threading.Thread | None = None
-        self.port: int = 0
-
-    def start(self) -> None:
-        parent = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, format, *args):
-                pass  # Suppress console logging
-
-            def _check_auth(self) -> bool:
-                auth = self.headers.get("Authorization", "")
-                api_key = self.headers.get("X-API-Key", "")
-                expected = f"Bearer {parent.token}"
-                return auth == expected or api_key == parent.token
-
-            def do_GET(self):
-                if parent.status_code != 200:
-                    self.send_response(parent.status_code)
-                    self.end_headers()
-                    self.wfile.write(b"Server error")
-                    return
-
-                if not self._check_auth():
-                    self.send_response(401)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"error": "rest_unauthorized"}).encode("utf-8"))
-                    return
-
-                if self.path.startswith("/wp-json/snippen/v1/door/bookings"):
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    resp = {"bookings": parent.bookings}
-                    self.wfile.write(json.dumps(resp).encode("utf-8"))
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-
-            def do_PATCH(self):
-                if parent.status_code != 200:
-                    self.send_response(parent.status_code)
-                    self.end_headers()
-                    return
-
-                if not self._check_auth():
-                    self.send_response(401)
-                    self.end_headers()
-                    return
-
-                # Path format: /wp-json/snippen/v1/door/bookings/{id}/code
-                if "/code" in self.path:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode("utf-8")
-                    data = json.loads(body)
-                    parts = self.path.strip("/").split("/")
-                    booking_id = parts[-2]
-                    parent.patch_calls.append({"id": booking_id, "data": data})
-
-                    # Update in-memory booking list if item exists
-                    for b in parent.bookings:
-                        if str(b.get("id")) == str(booking_id):
-                            b["door_code"] = data.get("door_code")
-
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(
-                        json.dumps({"success": True, "id": booking_id}).encode("utf-8")
-                    )
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-
-        self.server = HTTPServer(("127.0.0.1", 0), Handler)
-        self.port = self.server.server_port
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-
-    def stop(self) -> None:
-        if self.server:
-            self.server.shutdown()
-            self.server.server_close()
-        if self.thread:
-            self.thread.join(timeout=2.0)
 
 
 @pytest.fixture
