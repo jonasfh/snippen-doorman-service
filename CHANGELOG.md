@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-10-15
+
+### Added
+- Local administrative Web Dashboard (`snippen_doorman.web.DoormanWebServer`) on port 8080 accessible at `http://snippen-doorman-service.local:8080` with modern responsive dark-mode UI (#44, #36).
+- Embedded REST API endpoints on web server:
+  - `GET /api/status`: System telemetry (hostname, local IP, active WiFi SSID, uptime, recent events ring buffer, primary lock status and battery, and BLE setup window remaining seconds).
+  - `GET /api/config` and `POST /api/config`: View and update configuration with safe masking of secret keys and input validation.
+  - `POST /api/test/unlock`: Quick test action to send unlock command over BLE to verify lock mechanism.
+  - `POST /api/test/status`: Test action to query live battery and lock/door status over BLE and update database.
+  - `POST /api/test/api`: Test action to query Booking API endpoint and report number of active reservations.
+  - `POST /api/sync`: Manual sync trigger executing a single synchronization cycle against the booking platform.
+  - `GET /api/wifi/networks`: Scan nearby 2.4/5GHz WiFi networks via NetworkManager (`nmcli`).
+  - `POST /api/wifi/connect`: Connect to WiFi SSID with WPA passkey via NetworkManager.
+  - `POST /api/ble-setup`: Activate 10-minute BLE setup window.
+- Physical GPIO button handler (`snippen_doorman.gpio_button.GpioButtonHandler`) monitoring physical pushbutton on GPIO 26 with falling edge debounce, activating BLE setup mode on press (#44).
+- BLE WiFi setup peripheral controller (`snippen_doorman.ble.wifi_peripheral.BleWifiPeripheral`) implementing GATT service and characteristics matching `snippen-sms-service` standard, with automatic 10-minute timeout and `bluetoothctl` advertisement control (#36).
+- Web Bluetooth Configuration PWA (`tools/web-config`) in vanilla HTML/CSS/JS with service worker and manifest, supporting WiFi scanning, connection testing, simulator mode for hardware-independent development, and direct hand-off link to the local Web Dashboard (#36).
+- Static asset serving for `/web-config` directly from `DoormanWebServer` (#36).
+- Integration of Web Dashboard, GPIO button, and BLE peripheral into `snippen-doorman service run` (with `--web` / `--no-web` flags) and standalone CLI subcommand `snippen-doorman web` (#44).
+- Unit and contract tests for configuration manager, web server, WiFi manager, GPIO button handler, and Web Config PWA contract (#44, #36).
+
 ## [0.11.0] - 2026-10-15
 
 ### Added

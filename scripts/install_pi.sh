@@ -94,6 +94,13 @@ else
     exit 1
 fi
 
+# Copy web-config PWA assets if present
+if [ -d "${REPO_ROOT}/tools/web-config" ]; then
+    echo "🌐 Copying web-config PWA to ${INSTALL_DIR}/tools/web-config..."
+    mkdir -p "${INSTALL_DIR}/tools"
+    cp -r "${REPO_ROOT}/tools/web-config" "${INSTALL_DIR}/tools/"
+fi
+
 chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${INSTALL_DIR}"
 
 # 6. Install configuration template if not present

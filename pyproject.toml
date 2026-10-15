@@ -7,7 +7,7 @@ name = "snippen-doorman-service"
 dynamic = ["version"]
 description = "Access control service for Yale Doorman door locks with temporary codes"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 authors = [
     { name = "Snippen", email = "admin@snippen.com" }
 ]

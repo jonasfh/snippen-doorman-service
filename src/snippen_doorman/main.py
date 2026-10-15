@@ -324,6 +324,9 @@ async def run_service_command(
     guest_slot_min: int = 3,
     guest_slot_max: int = 9,
     locks: str | None = None,
+    enable_web: bool = True,
+    web_host: str = "0.0.0.0",
+    web_port: int = 8080,
 ) -> None:
     """Run Snippen Booking synchronization service or single tick."""
     path = database_path if storage_type == "sqlite" else json_path
@@ -415,6 +418,38 @@ async def run_service_command(
             print(
                 f"Starting Snippen Doorman Service daemon (storage: {storage_type}, interval: {interval_seconds:.1f}s, {lock_info})..."
             )
+            web_server = None
+            gpio_handler = None
+            ble_peripheral = None
+            if enable_web:
+                from snippen_doorman.ble.wifi_peripheral import BleWifiPeripheral
+                from snippen_doorman.config_manager import ConfigManager
+                from snippen_doorman.gpio_button import GpioButtonHandler
+                from snippen_doorman.web import DoormanWebServer
+
+                cfg_mgr = ConfigManager()
+                ble_peripheral = BleWifiPeripheral()
+                ble_peripheral.activate()
+
+                gpio_handler = GpioButtonHandler(
+                    pin=cfg_mgr.load_config().gpio_button_pin,
+                    on_press=lambda: ble_peripheral.activate() if ble_peripheral else None,
+                )
+                gpio_handler.start()
+
+                web_server = DoormanWebServer(
+                    host=web_host,
+                    port=web_port,
+                    config_manager=cfg_mgr,
+                    sync_engine=sync_engine,
+                    db=db,
+                    gpio_handler=gpio_handler,
+                    ble_peripheral=ble_peripheral,
+                    event_loop=asyncio.get_running_loop(),
+                )
+                web_server.start()
+                print(f"Web Dashboard listening on http://{web_host}:{web_port}")
+
             stop_event = asyncio.Event()
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
@@ -422,7 +457,15 @@ async def run_service_command(
                     loop.add_signal_handler(sig, stop_event.set)
                 except NotImplementedError:
                     pass
-            await sync_engine.run_loop(interval_seconds=interval_seconds, stop_event=stop_event)
+            try:
+                await sync_engine.run_loop(interval_seconds=interval_seconds, stop_event=stop_event)
+            finally:
+                if web_server:
+                    web_server.stop()
+                if gpio_handler:
+                    gpio_handler.stop()
+                if ble_peripheral:
+                    ble_peripheral.deactivate()
         else:
             raise ValueError(f"Unknown service action: {action}")
     finally:
@@ -430,6 +473,64 @@ async def run_service_command(
             await lc.disconnect()
         store.close()
         db.close()
+
+
+async def run_web_command(
+    host: str = "0.0.0.0",
+    port: int = 8080,
+    database_path: str = "data/doorman.db",
+    env_file: str | None = None,
+) -> None:
+    """Run standalone administrative Web Dashboard."""
+    from snippen_doorman.ble.wifi_peripheral import BleWifiPeripheral
+    from snippen_doorman.config_manager import ConfigManager
+    from snippen_doorman.gpio_button import GpioButtonHandler
+    from snippen_doorman.web import DoormanWebServer
+
+    cfg_mgr = ConfigManager(env_file)
+    db = (
+        Database(database_path)
+        if Path(database_path).exists() or database_path == ":memory:"
+        else None
+    )
+
+    ble_peripheral = BleWifiPeripheral()
+    ble_peripheral.activate()
+
+    gpio_handler = GpioButtonHandler(
+        pin=cfg_mgr.load_config().gpio_button_pin,
+        on_press=lambda: ble_peripheral.activate(),
+    )
+    gpio_handler.start()
+
+    loop = asyncio.get_running_loop()
+    web_server = DoormanWebServer(
+        host=host,
+        port=port,
+        config_manager=cfg_mgr,
+        db=db,
+        gpio_handler=gpio_handler,
+        ble_peripheral=ble_peripheral,
+        event_loop=loop,
+    )
+    web_server.start()
+    print(f"Snippen Doorman Web Dashboard listening on http://{host}:{port}")
+
+    stop_event = asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:
+            pass
+
+    try:
+        await stop_event.wait()
+    finally:
+        web_server.stop()
+        gpio_handler.stop()
+        ble_peripheral.deactivate()
+        if db:
+            db.close()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -752,6 +853,30 @@ def build_parser() -> argparse.ArgumentParser:
             default=os.getenv("SNIPPEN_DOORMAN_LOCKS"),
             help="Multi-lock configuration (JSON string or comma-separated list)",
         )
+        p.add_argument(
+            "--web",
+            dest="enable_web",
+            action="store_true",
+            default=True,
+            help="Enable local Web Dashboard (default: True)",
+        )
+        p.add_argument(
+            "--no-web",
+            dest="enable_web",
+            action="store_false",
+            help="Disable local Web Dashboard",
+        )
+        p.add_argument(
+            "--web-host",
+            default="0.0.0.0",
+            help="Web dashboard host (default: 0.0.0.0)",
+        )
+        p.add_argument(
+            "--web-port",
+            type=int,
+            default=8080,
+            help="Web dashboard port (default: 8080)",
+        )
         add_common_conn_args(p, slot_name="key_slot", required=False, include_timeout=False)
 
     # service run
@@ -763,6 +888,12 @@ def build_parser() -> argparse.ArgumentParser:
         "sync-once", help="Run a single synchronization tick"
     )
     add_service_args(service_sync_parser)
+
+    # web subcommand
+    web_parser = subparsers.add_parser("web", help="Start local web dashboard")
+    web_parser.add_argument("--host", default="0.0.0.0", help="Web host (default: 0.0.0.0)")
+    web_parser.add_argument("--port", type=int, default=8080, help="Web port (default: 8080)")
+    web_parser.add_argument("--env-file", default=None, help="Path to env configuration file")
 
     return parser
 
@@ -892,12 +1023,30 @@ def main_cli(argv: list[str] | None = None) -> None:
                     guest_slot_min=getattr(args, "guest_slot_min", 3),
                     guest_slot_max=getattr(args, "guest_slot_max", 9),
                     locks=getattr(args, "locks", None),
+                    enable_web=getattr(args, "enable_web", True),
+                    web_host=getattr(args, "web_host", "0.0.0.0"),
+                    web_port=getattr(args, "web_port", 8080),
                 )
             )
         except (KeyboardInterrupt, SystemExit):
             pass
         except (OSError, RuntimeError, ValueError) as exc:
             logger.error("Error executing service %s: %s", action, exc)
+            sys.exit(1)
+    elif args.subcommand == "web":
+        try:
+            asyncio.run(
+                run_web_command(
+                    host=args.host,
+                    port=args.port,
+                    database_path=args.database_path,
+                    env_file=args.env_file,
+                )
+            )
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.error("Error executing web dashboard: %s", exc)
             sys.exit(1)
     else:
         logger.info("Starting Snippen Doorman Service")

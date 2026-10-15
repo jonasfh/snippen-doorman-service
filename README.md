@@ -174,3 +174,22 @@ journalctl -u snippen-doorman -f
 ```
 
 See [docs/raspberry_pi_setup.md](docs/raspberry_pi_setup.md) for the comprehensive production deployment and Bluetooth troubleshooting guide.
+
+### Administrative Web Dashboard & BLE Setup
+
+`snippen-doorman-service` includes an embedded HTTP web dashboard on port `8080`:
+
+```bash
+# Start standalone web dashboard
+snippen-doorman web --port 8080
+
+# Or run with the main service (enabled by default)
+snippen-doorman service run --web
+```
+
+Access the dashboard at `http://snippen-doorman-service.local:8080` (or `http://<pi-ip>:8080`) to:
+- Monitor live gateway telemetry, battery health, and door/lock states.
+- Test unlock and inspect live synchronization logs.
+- Configure Yale Doorman locks, offline keys, and WordPress Booking API credentials.
+- Provision WiFi over Bluetooth Low Energy via the companion PWA at `http://<pi-ip>:8080/web-config`.
+- Activate BLE setup mode on Raspberry Pi via physical GPIO button (GPIO 26) or UI button.

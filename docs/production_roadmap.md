@@ -48,8 +48,8 @@ Fremdriften mot produksjon er delt inn i fire tydelige faser for å sikre raskes
 ```mermaid
 flowchart LR
     Fase1["Fase 1: Kjerne-synkronisering ✅\n(#29 & #30 - Fullført)\nPoller + Provisioner + BLE"]
-    Fase2["Fase 2: Pakking & Systemd\n(#37 & #7)\nbuild_release & install_pi.sh"]
-    Fase3["Fase 3: BLE WiFi-oppsett\n(#36)\nBlueZ GATT + tools/web-config"]
+    Fase2["Fase 2: Pakking & Systemd ✅\n(#37 & #7 - Fullført)\nbuild_release & install_pi.sh"]
+    Fase3["Fase 3: BLE WiFi & Web Dashboard ✅\n(#36 & #44 - Fullført)\nBlueZ GATT + tools/web-config + Dashboard"]
     Fase4["Fase 4: E2E Verifikasjon\nFysisk test på Snippen"]
 
     Fase1 --> Fase2
@@ -103,9 +103,9 @@ Sikre en deterministisk, reproduserbar utrulling på Raspberry Pi OS uten manuel
 
 ---
 
-### Fase 3: BLE WiFi-oppsett og administrativt webgrensesnitt
+### Fase 3: BLE WiFi-oppsett og administrativt webgrensesnitt (Fullført ✅)
 
-**Tilhørende issue**: [#36](https://github.com/jonasfh/snippen-doorman-service/issues/36)
+**Tilhørende issues**: [#36](https://github.com/jonasfh/snippen-doorman-service/issues/36) og [#44](https://github.com/jonasfh/snippen-doorman-service/issues/44)
 
 #### Mål:
 Gjøre det mulig for montører eller administratorer å konfigurere eller endre WiFi på Raspberry Pi uten bruk av skjerm, tastatur eller SSH, via en nettleser med Web Bluetooth API.

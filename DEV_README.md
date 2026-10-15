@@ -24,18 +24,26 @@ snippen-doorman-service/
 ├── tools/                    # Companion configuration and testing tools
 │   ├── decrypt_ble_snoop.py  # Decrypt Yale Doorman BLE sessions from btsnoop logs / bugreports
 │   ├── fetch_btsnoop.py      # Automated ADB pull and extraction of Bluetooth HCI snoop logs
-│   └── parse_ha_keys.py      # Extract Yale OfflineKeys from Home Assistant debug logs
+│   ├── parse_ha_keys.py      # Extract Yale OfflineKeys from Home Assistant debug logs
+│   └── web-config/           # PWA Web Bluetooth WiFi setup client (HTML/CSS/JS)
 ├── src/
 │   └── snippen_doorman/      # Application package
 │       ├── __init__.py       # Package version & exports
 │       ├── allocator.py      # Keypad slot allocation (descending 9->3, shielding 0-2)
 │       ├── booking_client.py # Snippen Booking HTTP REST API client (spec #351)
+│       ├── config_manager.py # Persistent configuration manager for .env
 │       ├── db.py             # SQLite storage and PinRecord models with audit timestamps
-│       ├── main.py           # Entry point & CLI runner (service, rtc, pin, schedule)
+│       ├── gpio_button.py    # Physical GPIO button handler for setup mode trigger
+│       ├── main.py           # Entry point & CLI runner (service, web, rtc, pin, schedule)
 │       ├── mock_server.py    # Embedded mock HTTP server simulating WordPress door API
 │       ├── poller.py         # Polling reconciliation engine for Snippen Booking
 │       ├── provisioner.py    # JIT PIN provisioning engine and scheduler daemon
 │       ├── sync.py           # Full sync engine connecting poller, storage, and provisioner
+│       ├── wifi_manager.py   # Linux NetworkManager integration for scanning & connecting WiFi
+│       ├── web/              # Embedded HTTP web server & responsive administrative dashboard
+│       │   ├── __init__.py   # Exports DoormanWebServer
+│       │   ├── html.py       # Embedded responsive HTML/CSS/JS dashboard UI
+│       │   └── server.py     # HTTP server implementation with REST endpoints
 │       ├── state/            # Pluggable state storage backends
 │       │   ├── base.py       # ReservationStore protocol
 │       │   ├── json_store.py # Lightweight JSON file store (atomic writes)
@@ -46,6 +54,7 @@ snippen-doorman-service/
 │           ├── discovery.py  # BLE scanner & Yale device identification
 │           ├── lock_config.py # Multi-lock configuration parser
 │           ├── pin.py        # PIN/RTC protocol encoding, packet builders & error parsing
+│           ├── wifi_peripheral.py # BLE GATT setup peripheral & advertisement controller
 │           └── client.py     # yalexs-ble wrapper for lock operations & PIN management
 ├── systemd/                  # systemd service unit templates
 │   ├── snippen-doorman.service # Production service definition for Raspberry Pi
@@ -55,17 +64,25 @@ snippen-doorman-service/
 │   ├── test_allocator.py     # SlotAllocator tests
 │   ├── test_booking_client.py # Snippen Booking HTTP client tests
 │   ├── test_client.py        # Lock client tests
+│   ├── test_config_manager.py # Persistent configuration manager tests
 │   ├── test_db.py            # SQLite database and PinRecord tests
 │   ├── test_decrypt_ble_snoop.py # BLE packet decryption tests
 │   ├── test_discovery.py     # BLE discovery tests
+│   ├── test_gpio_button.py   # GPIO button monitor tests
 │   ├── test_integration_booking.py # Mock-based end-to-end integration tests
+│   ├── test_lock_config.py   # Lock configuration parser tests
 │   ├── test_main.py          # CLI runner and subcommand tests
 │   ├── test_parse_ha_keys.py # Home Assistant key parser tests
 │   ├── test_pin.py           # PIN protocol and encoding tests
 │   ├── test_poller.py        # Poller reconciliation and diff tests
 │   ├── test_provisioner.py   # JIT provisioning engine tests
 │   ├── test_storage.py       # Pluggable storage backend tests
-│   └── test_verify_door_sync.py # Tests for interactive verification script
+│   ├── test_sync.py          # Full sync engine tests
+│   ├── test_verify_door_sync.py # Tests for interactive verification script
+│   ├── test_web_config_contract.py # Contract tests for web-config PWA and server
+│   ├── test_web_server.py    # Administrative web dashboard tests
+│   ├── test_wifi_manager.py  # Linux NetworkManager tests
+│   └── test_wifi_peripheral.py # BLE WiFi setup peripheral tests
 ├── .dockerignore             # Docker build context exclusions
 ├── Dockerfile                # Production container image definition (Python 3.14-slim)
 ├── pyproject.toml            # Python packaging and dependency config
@@ -134,3 +151,24 @@ For high-level system architecture, communication flows, and boundaries, see [do
    4. Du taster koden på låsens fysiske tastatur og verifiserer at døren låser opp.
    5. Trykk `[ENTER]` (eller tast `'r'` for å hente batterinivå og status over BLE).
    6. Skriptet simulerer at reservasjonen er ferdig/slettet, fjerner koden fra låsen over BLE og frigjør sporet.
+
+7. **Lokalt Web-dashboard (`http://snippen-doorman-service.local:8080`)**:
+   For daglig administrasjon og test av dørlåser, nøkler og synkroniseringsstatus på lokalnettet:
+   ```bash
+   # Kjøre som del av bakgrunnstjenesten (standard)
+   snippen-doorman service run
+
+   # Kjøre dedikert web-dashboard
+   snippen-doorman web --port 8080
+   ```
+   Dashboardet tilbyr:
+   - Live telemetri (vertsnavn, lokal IP, WiFi SSID, oppetid og siste hendelser).
+   - Dørlåsstatus (batteriprosent, låsetilstand, testknapp for opplåsing og manuell synkronisering).
+   - Konfigurasjonsredigering for dører, offline-kryptonøkler og Booking API URL/token.
+
+8. **BLE WiFi-oppsett og PWA (`tools/web-config`)**:
+   Dersom Raspberry Pi settes opp hodeløst uten skjerm eller nettverkskabel:
+   1. Aktiver BLE-oppsett (10 minutter ved oppstart, via fysisk knapp på GPIO 26, eller fra Web UI).
+   2. Åpne Web Bluetooth-klienten (`http://<pi-ip>:8080/web-config` eller frittstående PWA).
+   3. Trykk *"Koble til Doorman Gateway"* og skann tilgjengelige WiFi-nettverk over BLE.
+   4. Velg nettverk, skriv inn WPA-passord og fullfør oppsettet. Gatewayen kobler til WiFi og gir en direkte lenke til web-dashboardet.
