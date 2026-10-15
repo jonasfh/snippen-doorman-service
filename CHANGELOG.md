@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-10-15
+
+### Added
+- Quick action button "🔒 Lås dør (Test)" in the web dashboard alongside the unlock action, with new `POST /api/test/lock` backend endpoint.
+- In-memory lock telemetry cache in `DoormanWebServer` for zero-latency UI updates upon status or lock/unlock actions.
+- Norwegian display mappings for lock and door statuses (`Ulåst` / `Låst` and `Lukket` / `Åpen`).
+- Raspberry Pi setup documentation update detailing user permissions (`bluetooth` group), rfkill unblock, and service restarts.
+
+### Fixed
+- Fixed thread-safety in `Database` by enabling `check_same_thread=False` with mutual exclusion lock across HTTP request threads.
+- Fixed database initialization in standalone `snippen-doorman web` so database tables are created automatically on launch.
+- Fixed telemetry updates during test unlock/lock actions so live battery and lock state are recorded to the database.
+
 ## [0.12.0] - 2026-10-15
 
 ### Added

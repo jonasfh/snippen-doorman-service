@@ -114,5 +114,18 @@ def test_web_server_endpoints(tmp_path) -> None:
             conn_data = json.loads(res.read().decode("utf-8"))
             assert conn_data["success"] is True
 
+        # 8. Check lock status cache reflection in /api/status
+        server._lock_status_cache["98:1B:B5:0B:BB:35"] = {
+            "battery": 95,
+            "lock_status": "LOCKED",
+            "door_status": "CLOSED",
+        }
+        with urlopen(f"{base_url}/api/status") as res:
+            assert res.status == 200
+            status_data = json.loads(res.read().decode("utf-8"))
+            assert status_data["primary_lock"]["battery"] == 95
+            assert status_data["primary_lock"]["lock_status"] == "LOCKED"
+            assert status_data["primary_lock"]["door_status"] == "CLOSED"
+
     finally:
         server.stop()

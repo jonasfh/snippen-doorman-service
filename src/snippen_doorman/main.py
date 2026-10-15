@@ -488,11 +488,7 @@ async def run_web_command(
     from snippen_doorman.web import DoormanWebServer
 
     cfg_mgr = ConfigManager(env_file)
-    db = (
-        Database(database_path)
-        if Path(database_path).exists() or database_path == ":memory:"
-        else None
-    )
+    db = Database(database_path)
 
     ble_peripheral = BleWifiPeripheral()
     ble_peripheral.activate()

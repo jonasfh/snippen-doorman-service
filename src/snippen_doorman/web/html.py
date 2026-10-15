@@ -151,6 +151,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div class="card-title">⚡ Hurtighandlinger</div>
         <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
           <button class="btn btn-primary" onclick="triggerUnlock()">🔓 Lås opp dør (Test)</button>
+          <button class="btn btn-secondary" onclick="triggerLock()">🔒 Lås dør (Test)</button>
           <button class="btn btn-secondary" onclick="triggerSync()">🔄 Synkroniser reservasjoner nå</button>
           <button class="btn btn-secondary" onclick="testLockStatus()">🔋 Oppdater batteri over BLE</button>
         </div>
@@ -261,6 +262,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       setTimeout(() => { toast.style.display = 'none'; }, 4000);
     }
 
+    function updateLockStateInUI(lk) {
+      if (!lk) return;
+      const lockMap = { 'unlocked': 'Ulåst', 'locked': 'Låst', 'jammed': 'Fastkilt', 'unknown': 'UKJENT' };
+      const doorMap = { 'closed': 'Lukket', 'open': 'Åpen', 'unknown': 'UKJENT' };
+      if (lk.name) document.getElementById('lock-name').textContent = lk.name;
+      if (lk.address) document.getElementById('lock-addr').textContent = lk.address;
+      if (lk.lock_status) {
+        const s = lk.lock_status.toLowerCase();
+        document.getElementById('lock-status').textContent = lockMap[s] || lk.lock_status.toUpperCase();
+      }
+      if (lk.door_status) {
+        const s = lk.door_status.toLowerCase();
+        document.getElementById('door-status').textContent = doorMap[s] || lk.door_status.toUpperCase();
+      }
+      if (lk.battery != null) {
+        document.getElementById('lock-battery').textContent = lk.battery + '%';
+      }
+    }
+
     async function loadStatus() {
       try {
         const res = await fetch('/api/status');
@@ -273,11 +293,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         document.getElementById('sys-uptime').textContent = data.uptime || '-';
 
         if (data.primary_lock) {
-          document.getElementById('lock-name').textContent = data.primary_lock.name || 'Hoveddør';
-          document.getElementById('lock-addr').textContent = data.primary_lock.address || '-';
-          document.getElementById('lock-status').textContent = data.primary_lock.lock_status ? data.primary_lock.lock_status.toUpperCase() : 'UKJENT';
-          document.getElementById('door-status').textContent = data.primary_lock.door_status ? data.primary_lock.door_status.toUpperCase() : 'UKJENT';
-          document.getElementById('lock-battery').textContent = data.primary_lock.battery != null ? data.primary_lock.battery + '%' : 'N/A';
+          updateLockStateInUI(data.primary_lock);
         }
 
         if (data.events && data.events.length) {
@@ -441,9 +457,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const data = await res.json();
         if (data.success) {
           showToast('Døren er låst opp!', 'success');
+          updateLockStateInUI(data);
           loadStatus();
         } else {
           showToast('Kunne ikke låse opp: ' + data.error, 'error');
+        }
+      } catch (err) {
+        showToast('Feil: ' + err.message, 'error');
+      }
+    }
+
+    async function triggerLock() {
+      if (!confirm('Vil du sende test-låsesignal til låsen over BLE?')) return;
+      showToast('Sender låsekommando over BLE...', 'info');
+      try {
+        const res = await fetch('/api/test/lock', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showToast('Døren er låst!', 'success');
+          updateLockStateInUI(data);
+          loadStatus();
+        } else {
+          showToast('Kunne ikke låse: ' + data.error, 'error');
         }
       } catch (err) {
         showToast('Feil: ' + err.message, 'error');
@@ -469,6 +504,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const data = await res.json();
         if (data.success) {
           showToast(`Lås svarte! Batteri: ${data.battery != null ? data.battery + '%' : 'N/A'}`, 'success');
+          updateLockStateInUI(data);
           loadStatus();
         } else {
           showToast('Feil under oppkobling: ' + data.error, 'error');
