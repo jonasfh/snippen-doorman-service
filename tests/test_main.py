@@ -452,3 +452,15 @@ def test_main_cli_service_with_multi_lock(
         assert "'ytterdor' [AA:BB:CC:DD:EE:01]" in captured.out
         assert "'fellesrom' [AA:BB:CC:DD:EE:02]" in captured.out
         assert "Synchronization Summary" in captured.out
+
+
+def test_web_subcommand_parser() -> None:
+    """Test argument parser for web subcommand."""
+    parser = build_parser()
+    args = parser.parse_args(
+        ["web", "--host", "127.0.0.1", "--port", "9090", "--env-file", "my.env"]
+    )
+    assert args.subcommand == "web"
+    assert args.host == "127.0.0.1"
+    assert args.port == 9090
+    assert args.env_file == "my.env"

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#2563eb">
+  <title>Snippen Doorman | WiFi Oppsett</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+  <link rel="apple-touch-icon" href="assets/icon.svg">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <header>
+      <div class="brand">
+        <img src="assets/icon.svg" alt="Doorman" class="brand-icon">
+        <div>
+          <h1>Snippen Doorman</h1>
+          <p>BLE WiFi-oppsett</p>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem;">
+        <span class="pill" id="status-pill">
+          <span class="pill-dot"></span>
+          <span id="status-label">Frakoblet</span>
+        </span>
+        <label class="sim-switch">
+          <input type="checkbox" id="sim-mode">
+          <span>Simulator</span>
+        </label>
+      </div>
+    </header>
+
+    <div id="feedback" class="feedback-banner"></div>
+
+    <!-- Connection Card -->
+    <div class="card" id="connection-card">
+      <div class="card-title">📡 Bluetooth Tilkobling</div>
+      <p class="card-desc">
+        Trykk på den fysiske knappen på Raspberry Pi (eller start den på nytt) for å aktivere oppsettmodus i 10 minutter, og trykk koble til.
+      </p>
+      <button class="btn btn-primary" id="btn-connect">Koble til Doorman Gateway</button>
+      <button class="btn btn-danger" id="btn-disconnect" style="display: none;">Koble fra</button>
+    </div>
+
+    <!-- WiFi Setup Card -->
+    <div class="card" id="wifi-card" style="display: none;">
+      <div class="card-title">📶 WiFi Konfigurasjon</div>
+      <p class="card-desc">Velg et trådløst nettverk eller skriv inn SSID manuelt.</p>
+
+      <div style="margin-bottom: 1rem;">
+        <button class="btn btn-secondary" id="btn-scan-wifi" style="margin-bottom: 0.75rem;">Skann WiFi-nettverk</button>
+        <div id="wifi-list"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="wifi-ssid">Nettverksnavn (SSID)</label>
+        <input type="text" id="wifi-ssid" placeholder="F.eks. Snippen-Guest">
+      </div>
+
+      <div class="form-group">
+        <label for="wifi-password">Passord / WPA-nøkkel</label>
+        <input type="password" id="wifi-password" placeholder="WiFi passord">
+      </div>
+
+      <button class="btn btn-success" id="btn-connect-wifi">Lagre & Koble til</button>
+    </div>
+
+    <!-- Dashboard Link Card -->
+    <div class="card" id="dashboard-card" style="display: none; border-color: var(--success);">
+      <div class="card-title">🎉 Gateway Tilkoblet!</div>
+      <p class="card-desc">
+        Gatewayen er nå tilkoblet det lokale nettverket. Du kan nå åpne det fullverdige kontrollpanelet for å konfigurere dørlåser, nøkler og Booking API:
+      </p>
+      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+        <a class="btn btn-primary" id="dashboard-link" target="_blank" href="#">Åpne Dashboard</a>
+        <button class="btn btn-secondary" id="btn-apply-exit">Avslutt BLE Oppsett</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>
