@@ -324,6 +324,7 @@ async def run_service_command(
     guest_slot_min: int = 3,
     guest_slot_max: int = 9,
     locks: str | None = None,
+    lock_id: int | None = None,
     enable_web: bool = True,
     web_host: str = "0.0.0.0",
     web_port: int = 8080,
@@ -339,6 +340,7 @@ async def run_service_command(
         default_address=address,
         default_key=key,
         default_slot=key_slot,
+        default_lock_id=lock_id,
     )
     lock_clients = [
         YaleLockClient(
@@ -346,6 +348,7 @@ async def run_service_command(
             key=cfg.key,
             slot=cfg.slot,
             local_name=cfg.name,
+            lock_id=cfg.lock_id,
         )
         for cfg in lock_configs
     ]
@@ -363,7 +366,14 @@ async def run_service_command(
         api_url=api_url, api_token=api_token, timeout_seconds=timeout_seconds
     )
     poller = BookingPoller(client=client, store=store, auto_generate_pin=auto_generate_pin)
-    sync_engine = DoormanSyncEngine(poller=poller, provisioner=provisioner, store=store, db=db)
+    lock_ids = [cfg.lock_id for cfg in lock_configs if cfg.lock_id is not None]
+    sync_engine = DoormanSyncEngine(
+        poller=poller,
+        provisioner=provisioner,
+        store=store,
+        db=db,
+        lock_ids=lock_ids if lock_ids else None,
+    )
 
     try:
         if action == "sync-once":
@@ -850,6 +860,16 @@ def build_parser() -> argparse.ArgumentParser:
             help="Multi-lock configuration (JSON string or comma-separated list)",
         )
         p.add_argument(
+            "--lock-id",
+            type=int,
+            default=(
+                int(os.getenv("SNIPPEN_DOORMAN_LOCK_ID"))
+                if os.getenv("SNIPPEN_DOORMAN_LOCK_ID")
+                else None
+            ),
+            help="Single lock ID from WordPress Booking API (default: None)",
+        )
+        p.add_argument(
             "--web",
             dest="enable_web",
             action="store_true",
@@ -1019,6 +1039,7 @@ def main_cli(argv: list[str] | None = None) -> None:
                     guest_slot_min=getattr(args, "guest_slot_min", 3),
                     guest_slot_max=getattr(args, "guest_slot_max", 9),
                     locks=getattr(args, "locks", None),
+                    lock_id=getattr(args, "lock_id", None),
                     enable_web=getattr(args, "enable_web", True),
                     web_host=getattr(args, "web_host", "0.0.0.0"),
                     web_port=getattr(args, "web_port", 8080),

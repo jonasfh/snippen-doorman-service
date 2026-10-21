@@ -129,21 +129,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <div class="stat-row"><span class="stat-label">Lokal IP:</span><span class="stat-val" id="sys-ip">-</span></div>
           <div class="stat-row"><span class="stat-label">WiFi Nettverk:</span><span class="stat-val" id="sys-wifi">-</span></div>
           <div class="stat-row"><span class="stat-label">Oppetid:</span><span class="stat-val" id="sys-uptime">-</span></div>
-          <div class="stat-row"><span class="stat-label">Tjenesteversjon:</span><span class="stat-val" id="sys-version">0.11.0</span></div>
+          <div class="stat-row"><span class="stat-label">Tjenesteversjon:</span><span class="stat-val" id="sys-version">0.14.0</span></div>
         </div>
 
         <!-- Lock Status -->
-        <div class="card">
+        <div class="card" id="primary-lock-card">
           <div class="card-title">
             <span>🚪 Primærlås</span>
             <span class="badge badge-green" id="lock-state-badge">Tilkoblet</span>
           </div>
           <div class="stat-row"><span class="stat-label">Navn:</span><span class="stat-val" id="lock-name">Hoveddør</span></div>
+          <div class="stat-row"><span class="stat-label">Lås-ID:</span><span class="stat-val" id="lock-remote-id">-</span></div>
           <div class="stat-row"><span class="stat-label">MAC-adresse:</span><span class="stat-val" id="lock-addr">-</span></div>
           <div class="stat-row"><span class="stat-label">Låsetilstand:</span><span class="stat-val" id="lock-status">-</span></div>
           <div class="stat-row"><span class="stat-label">Dørtilstand:</span><span class="stat-val" id="door-status">-</span></div>
           <div class="stat-row"><span class="stat-label">Batterinivå:</span><span class="stat-val" id="lock-battery">-</span></div>
         </div>
+      </div>
+
+      <!-- Multi-door Overview (if more than 1 lock) -->
+      <div class="card" id="all-locks-card" style="display: none;">
+        <div class="card-title">🚪 Konfigurerte dørlåser</div>
+        <div id="all-locks-list"></div>
       </div>
 
       <!-- Quick Actions -->
@@ -168,6 +175,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     <!-- TAB 2: DØRLÅSER -->
     <div id="tab-locks" class="tab-content">
+      <div class="card" style="margin-bottom: 1.25rem;">
+        <div class="card-title">🌐 Hent låser fra WordPress Booking API</div>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
+          Henter definerte låser og tilknyttede objekter (f.eks. Hoveddel, Kjeller) fra Booking-pluginen for enkel tildeling av Lås-ID.
+        </p>
+        <button type="button" class="btn btn-secondary" onclick="fetchRemoteLocks()">🔄 Hent låser fra API</button>
+        <div id="remote-locks-container" style="margin-top: 1rem; display: none;"></div>
+      </div>
+
       <div class="card">
         <div class="card-title">🔐 Konfigurer Yale Doorman Lås(er)</div>
         <form id="locks-form" onsubmit="saveLocks(event)">
@@ -267,6 +283,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const lockMap = { 'unlocked': 'Ulåst', 'locked': 'Låst', 'jammed': 'Fastkilt', 'unknown': 'UKJENT' };
       const doorMap = { 'closed': 'Lukket', 'open': 'Åpen', 'unknown': 'UKJENT' };
       if (lk.name) document.getElementById('lock-name').textContent = lk.name;
+      document.getElementById('lock-remote-id').textContent = lk.lock_id != null ? lk.lock_id : 'Auto / Alle';
       if (lk.address) document.getElementById('lock-addr').textContent = lk.address;
       if (lk.lock_status) {
         const s = lk.lock_status.toLowerCase();
@@ -294,6 +311,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         if (data.primary_lock) {
           updateLockStateInUI(data.primary_lock);
+        }
+
+        const allLocksCard = document.getElementById('all-locks-card');
+        if (data.locks && data.locks.length > 1) {
+          allLocksCard.style.display = 'block';
+          const listEl = document.getElementById('all-locks-list');
+          listEl.innerHTML = data.locks.map(lk => `
+            <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+              <div>
+                <strong>${lk.name || 'Uten navn'}</strong>
+                <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: 0.5rem;">(${lk.address || 'Ingen MAC'})</span>
+                <span class="badge badge-blue" style="margin-left: 0.5rem;">Lås-ID: ${lk.lock_id != null ? lk.lock_id : 'Auto'}</span>
+              </div>
+              <div style="display: flex; gap: 0.75rem; font-size: 0.85rem;">
+                <span>Status: <strong>${lk.lock_status || '-'}</strong></span>
+                <span>Batteri: <strong>${lk.battery != null ? lk.battery + '%' : '-'}</strong></span>
+              </div>
+            </div>
+          `).join('');
+        } else {
+          allLocksCard.style.display = 'none';
         }
 
         if (data.events && data.events.length) {
@@ -328,7 +366,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     function renderLocks(locks) {
       const container = document.getElementById('locks-container');
       if (!locks || !locks.length) {
-        locks = [{ name: 'Hoveddør', address: '', key_masked: '', slot: 1 }];
+        locks = [{ name: 'Hoveddør', address: '', key_masked: '', slot: 1, lock_id: null }];
       }
       container.innerHTML = locks.map((lk, i) => `
         <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
@@ -352,6 +390,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <label>Nøkkelspor (Slot)</label>
               <input type="number" class="lock-slot" value="${lk.slot || 1}" min="1" max="10">
             </div>
+          </div>
+          <div class="form-group">
+            <label>Lås-ID i Booking API (påkrevd ved flere dører i WordPress)</label>
+            <input type="number" class="lock-id" value="${lk.lock_id != null ? lk.lock_id : ''}" placeholder="f.eks. 1 eller 2" min="1">
           </div>
         </div>
       `).join('');
@@ -384,6 +426,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <input type="number" class="lock-slot" value="1" min="1" max="10">
             </div>
           </div>
+          <div class="form-group">
+            <label>Lås-ID i Booking API (påkrevd ved flere dører i WordPress)</label>
+            <input type="number" class="lock-id" value="" placeholder="f.eks. 1 eller 2" min="1">
+          </div>
         </div>
       `;
       container.appendChild(div.firstElementChild);
@@ -395,16 +441,88 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const addrs = document.querySelectorAll('.lock-addr');
       const keys = document.querySelectorAll('.lock-key');
       const slots = document.querySelectorAll('.lock-slot');
+      const lockIds = document.querySelectorAll('.lock-id');
 
       const locks = [];
       for (let i = 0; i < names.length; i++) {
+        const rawId = lockIds[i]?.value.trim();
+        const parsedId = rawId ? parseInt(rawId, 10) : null;
         locks.push({
           name: names[i].value.trim(),
           address: addrs[i].value.trim(),
           key: keys[i].value.trim(),
-          slot: parseInt(slots[i].value, 10) || 1
+          slot: parseInt(slots[i].value, 10) || 1,
+          lock_id: isNaN(parsedId) ? null : parsedId
         });
       }
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locks })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('Låsinnstillinger lagret!', 'success');
+          loadConfig();
+        } else {
+          showToast('Feil: ' + (data.errors || []).join(', '), 'error');
+        }
+      } catch (err) {
+        showToast('Kunne ikke lagre: ' + err.message, 'error');
+      }
+    }
+
+    async function fetchRemoteLocks() {
+      showToast('Henter låser fra Booking API...', 'info');
+      try {
+        const res = await fetch('/api/remote-locks');
+        const data = await res.json();
+        const container = document.getElementById('remote-locks-container');
+        if (data.success && data.locks && data.locks.length) {
+          container.style.display = 'block';
+          container.innerHTML = `
+            <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">Tilgjengelige låser i WordPress:</div>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+              ${data.locks.map(rl => `
+                <div style="background: rgba(255,255,255,0.05); padding: 0.6rem 0.8rem; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <strong>${rl.name}</strong> (ID: ${rl.id})
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">Objekter: ${(rl.handles_objects || []).join(', ') || 'Alle'}</div>
+                  </div>
+                  <button type="button" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="applyRemoteLock(${rl.id}, '${rl.name}')">Bruk ID ${rl.id}</button>
+                </div>
+              `).join('')}
+            </div>
+          `;
+          showToast(`Fant ${data.locks.length} lås(er) i Booking API!`, 'success');
+        } else {
+          container.style.display = 'block';
+          container.innerHTML = `<div style="color: var(--yellow);">Ingen låser funnet eller API returnerte tom liste.</div>`;
+          showToast(data.error || 'Ingen låser funnet', 'warning');
+        }
+      } catch (err) {
+        showToast('Feil ved henting: ' + err.message, 'error');
+      }
+    }
+
+    function applyRemoteLock(id, name) {
+      const lockIdInputs = document.querySelectorAll('.lock-id');
+      let filled = false;
+      for (let inp of lockIdInputs) {
+        if (!inp.value) {
+          inp.value = id;
+          filled = true;
+          break;
+        }
+      }
+      if (!filled && lockIdInputs.length > 0) {
+        lockIdInputs[0].value = id;
+        filled = true;
+      }
+      showToast(`Satte Lås-ID ${id} i skjemaet. Husk å lagre!`, 'info');
+    }
 
       try {
         const res = await fetch('/api/config', {

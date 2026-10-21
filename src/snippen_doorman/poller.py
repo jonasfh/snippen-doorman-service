@@ -66,10 +66,14 @@ class BookingPoller:
         self.auto_generate_pin = auto_generate_pin
         self.pin_generator = pin_generator or generate_secure_pin
 
-    def poll_once(self, now: datetime | None = None) -> PollTickResult:
+    def poll_once(
+        self,
+        now: datetime | None = None,
+        lock_id: int | str | None = None,
+    ) -> PollTickResult:
         """Execute a single polling synchronization cycle.
 
-        1. Fetches current and upcoming reservations from Snippen Booking platform.
+        1. Fetches current and upcoming reservations from Snippen Booking platform (optionally for lock_id).
         2. Detects new reservations and persists them.
         3. Detects updated reservations (time or code modified) and updates state.
         4. Detects unchanged reservations and updates last_seen timestamp.
@@ -78,6 +82,7 @@ class BookingPoller:
 
         Args:
             now: Current timestamp (defaults to UTC now).
+            lock_id: Optional lock ID to poll reservations for a specific door lock.
 
         Returns:
             PollTickResult summarizing operations completed.
@@ -92,7 +97,7 @@ class BookingPoller:
         result = PollTickResult()
 
         try:
-            remote_bookings: list[RemoteBooking] = self.client.fetch_bookings()
+            remote_bookings: list[RemoteBooking] = self.client.fetch_bookings(lock_id=lock_id)
         except BookingClientError as exc:
             msg = f"Failed to poll Snippen Booking: {exc}"
             logger.warning(msg)
@@ -105,6 +110,7 @@ class BookingPoller:
             return result
 
         remote_by_id: dict[str, RemoteBooking] = {rb.id: rb for rb in remote_bookings}
+        lock_id_str = str(lock_id) if lock_id is not None else None
 
         # Step 1: Reconcile incoming remote bookings against local store
         for booking_id, remote in remote_by_id.items():
@@ -133,6 +139,7 @@ class BookingPoller:
                     pin=pin,
                     status=ReservationStatus.ACTIVE,
                     content_hash=content_hash,
+                    lock_id=lock_id_str,
                     last_seen_at=now,
                 )
                 self.store.save_reservation(record)
@@ -164,6 +171,9 @@ class BookingPoller:
                     ReservationStatus.CANCELLED,
                 )
 
+                if lock_id_str is not None and existing.lock_id is None:
+                    existing.lock_id = lock_id_str
+
                 if has_changed:
                     existing.valid_from = remote.start_time
                     existing.valid_to = remote.end_time
@@ -182,6 +192,13 @@ class BookingPoller:
         # Step 2: Identify reservations missing from remote poll (removed/irrelevant)
         all_stored = self.store.list_reservations()
         for record in all_stored:
+            # If polling for a specific lock_id, only reconcile records that belong to this lock_id
+            if (
+                lock_id_str is not None
+                and record.lock_id is not None
+                and record.lock_id != lock_id_str
+            ):
+                continue
             if record.booking_id not in remote_by_id and record.status in (
                 ReservationStatus.ACTIVE,
                 ReservationStatus.NEW,

@@ -39,6 +39,7 @@ class SqliteReservationStore:
                 """
                 CREATE TABLE IF NOT EXISTS reservations (
                     booking_id TEXT PRIMARY KEY NOT NULL,
+                    lock_id TEXT,
                     pin TEXT,
                     status TEXT NOT NULL,
                     valid_from TEXT NOT NULL,
@@ -55,6 +56,15 @@ class SqliteReservationStore:
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_reservations_valid_from ON reservations(valid_from);"
+            )
+
+            # Check if lock_id column exists (migration for existing databases)
+            cursor = self._conn.execute("PRAGMA table_info(reservations);")
+            cols = [row["name"] for row in cursor.fetchall()]
+            if "lock_id" not in cols:
+                self._conn.execute("ALTER TABLE reservations ADD COLUMN lock_id TEXT;")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_reservations_lock_id ON reservations(lock_id);"
             )
 
     def get_reservation(self, booking_id: str) -> ReservationRecord | None:
@@ -104,13 +114,14 @@ class SqliteReservationStore:
             self._conn.execute(
                 """
                 INSERT INTO reservations (
-                    booking_id, pin, status, valid_from, valid_to,
+                    booking_id, lock_id, pin, status, valid_from, valid_to,
                     content_hash, last_seen_at, created_at, modified_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.booking_id.strip(),
+                    record.lock_id,
                     record.pin,
                     status_val,
                     format_utc_iso(record.valid_from),
@@ -140,11 +151,12 @@ class SqliteReservationStore:
             self._conn.execute(
                 """
                 UPDATE reservations
-                SET pin = ?, status = ?, valid_from = ?, valid_to = ?,
+                SET lock_id = COALESCE(?, lock_id), pin = ?, status = ?, valid_from = ?, valid_to = ?,
                     content_hash = ?, last_seen_at = ?, modified_at = ?
                 WHERE booking_id = ?
                 """,
                 (
+                    record.lock_id,
                     record.pin,
                     status_val,
                     format_utc_iso(record.valid_from),
@@ -175,6 +187,7 @@ class SqliteReservationStore:
             valid_from=parse_utc_iso(row["valid_from"]) or datetime.now(UTC),
             valid_to=parse_utc_iso(row["valid_to"]) or datetime.now(UTC),
             content_hash=row["content_hash"],
+            lock_id=row["lock_id"] if "lock_id" in set(row.keys()) else None,
             last_seen_at=parse_utc_iso(row["last_seen_at"]),
             created_at=parse_utc_iso(row["created_at"]),
             modified_at=parse_utc_iso(row["modified_at"]),

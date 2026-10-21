@@ -91,6 +91,7 @@ class YaleLockClient:
         slot: int = 1,
         local_name: str | None = None,
         idle_disconnect_delay: float = 5.1,
+        lock_id: int | str | None = None,
     ) -> None:
         """Initialize the client with connection parameters and credentials.
 
@@ -100,6 +101,7 @@ class YaleLockClient:
             slot: Key index / slot number (default 1).
             local_name: Optional local BLE name.
             idle_disconnect_delay: Delay before disconnecting idle BLE connection.
+            lock_id: Optional WordPress Booking door lock identifier.
         """
         if not address or not address.strip():
             raise ValueError("BLE address must not be empty.")
@@ -116,6 +118,7 @@ class YaleLockClient:
         self.slot = slot
         self.local_name = local_name
         self.idle_disconnect_delay = idle_disconnect_delay
+        self.lock_id = str(lock_id) if lock_id is not None else None
 
         self._push_lock: PushLock | None = None
         self._cancel_cb: Callable[[], None] | None = None

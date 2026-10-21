@@ -7,7 +7,7 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -35,6 +35,21 @@ class BookingApiError(BookingClientError):
     def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+@dataclass
+class RemoteLock:
+    """Represents a door lock registered in the Snippen Booking platform."""
+
+    id: int
+    name: str
+    handles_objects: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.id = int(self.id)
+        self.name = str(self.name).strip()
+        if not isinstance(self.handles_objects, list):
+            self.handles_objects = []
 
 
 @dataclass
@@ -154,15 +169,57 @@ class SnippenBookingClient:
                 f"Network communication failed for {url}: {exc}",
             ) from exc
 
-    def fetch_bookings(self) -> list[RemoteBooking]:
+    def fetch_locks(self) -> list[RemoteLock]:
+        """Fetch registered door locks from Snippen Booking platform.
+
+        Endpoint: GET /wp-json/snippen/v1/door/locks
+
+        Returns:
+            List of RemoteLock instances.
+        """
+        response = self._request("GET", "locks")
+        locks_data = response.get("locks", response) if isinstance(response, dict) else response
+        if not isinstance(locks_data, list):
+            logger.warning("Unexpected response format from locks endpoint: %r", response)
+            return []
+
+        results: list[RemoteLock] = []
+        for item in locks_data:
+            if not isinstance(item, dict):
+                continue
+            lock_id = item.get("id")
+            name = item.get("name", "")
+            if lock_id is None:
+                continue
+            try:
+                lid = int(lock_id)
+            except (ValueError, TypeError):
+                continue
+            handles = item.get("handles_objects", [])
+            results.append(
+                RemoteLock(
+                    id=lid,
+                    name=str(name),
+                    handles_objects=list(handles) if isinstance(handles, list) else [],
+                )
+            )
+        return results
+
+    def fetch_bookings(self, lock_id: int | str | None = None) -> list[RemoteBooking]:
         """Fetch current and upcoming reservations from Snippen Booking platform.
 
-        Endpoint: GET /wp-json/snippen/v1/door/bookings
+        Endpoint: GET /wp-json/snippen/v1/door/bookings(?lock_id=<id>)
+
+        Args:
+            lock_id: Optional lock ID to filter reservations for a specific door lock.
 
         Returns:
             List of RemoteBooking instances.
         """
-        response = self._request("GET", "bookings")
+        path = "bookings"
+        if lock_id is not None:
+            path = f"bookings?lock_id={urllib.parse.quote(str(lock_id))}"
+        response = self._request("GET", path)
         bookings_data = (
             response.get("bookings", response) if isinstance(response, dict) else response
         )

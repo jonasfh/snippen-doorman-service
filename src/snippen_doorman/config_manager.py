@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from snippen_doorman.ble.lock_config import parse_lock_configs
+
 logger = logging.getLogger(__name__)
 
 HEX_KEY_PATTERN = re.compile(r"^[0-9a-fA-F]{32}$")
@@ -23,6 +25,7 @@ class LockSetting:
     address: str = ""
     key: str = ""
     slot: int = 1
+    lock_id: int | None = None
 
 
 @dataclass
@@ -112,7 +115,6 @@ class ConfigManager:
         admin_password = get_val("SNIPPEN_DOORMAN_ADMIN_PASSWORD", "snippen2026")
 
         # Parse locks
-        locks: list[LockSetting] = []
         multi_locks_str = get_val("SNIPPEN_DOORMAN_LOCKS", "")
         single_addr = get_val("SNIPPEN_DOORMAN_BLE_ADDRESS", "")
         single_key = get_val("SNIPPEN_DOORMAN_BLE_KEY", "")
@@ -120,32 +122,29 @@ class ConfigManager:
             single_slot = int(get_val("SNIPPEN_DOORMAN_BLE_SLOT", "1"))
         except ValueError:
             single_slot = 1
+        raw_lock_id = get_val("SNIPPEN_DOORMAN_LOCK_ID", "")
+        try:
+            single_lock_id = int(raw_lock_id) if raw_lock_id.strip() else None
+        except ValueError:
+            single_lock_id = None
 
-        if multi_locks_str.strip():
-            # Format: Name1=MAC1:KEY1:SLOT1,Name2=MAC2:KEY2:SLOT2
-            for part in multi_locks_str.split(","):
-                part = part.strip()
-                if not part or "=" not in part:
-                    continue
-                name, rest = part.split("=", 1)
-                pieces = rest.strip().split(":")
-                addr = pieces[0].strip() if len(pieces) > 0 else ""
-                k = pieces[1].strip() if len(pieces) > 1 else ""
-                try:
-                    s = int(pieces[2].strip()) if len(pieces) > 2 else 1
-                except ValueError:
-                    s = 1
-                locks.append(LockSetting(name=name.strip(), address=addr, key=k, slot=s))
-
-        if not locks and single_addr:
-            locks.append(
-                LockSetting(
-                    name="Hoveddør",
-                    address=single_addr,
-                    key=single_key,
-                    slot=single_slot,
-                )
+        parsed_locks = parse_lock_configs(
+            locks_val=multi_locks_str,
+            default_address=single_addr if single_addr else None,
+            default_key=single_key if single_key else None,
+            default_slot=single_slot,
+            default_lock_id=single_lock_id,
+        )
+        locks: list[LockSetting] = [
+            LockSetting(
+                name=pl.name if pl.name != "default" else "Hoveddør",
+                address=pl.address,
+                key=pl.key,
+                slot=pl.slot,
+                lock_id=pl.lock_id,
             )
+            for pl in parsed_locks
+        ]
 
         return DoormanConfig(
             api_url=api_url,
@@ -181,6 +180,7 @@ class ConfigManager:
                     "key_configured": bool(lk.key),
                     "key_masked": mask_secret(lk.key),
                     "slot": lk.slot,
+                    "lock_id": lk.lock_id,
                 }
                 for lk in cfg.locks
             ],
@@ -270,6 +270,16 @@ class ConfigManager:
                 except (ValueError, TypeError):
                     slot = 1
 
+                raw_lid = item.get("lock_id")
+                lock_id: int | None = None
+                if raw_lid not in (None, ""):
+                    try:
+                        lock_id = int(raw_lid)
+                        if lock_id <= 0:
+                            errors.append(f"Lås-ID for '{name}' må være et positivt heltall.")
+                    except (ValueError, TypeError):
+                        errors.append(f"Ugyldig lås-ID for '{name}': {raw_lid}")
+
                 # If key was masked, look up existing key
                 if "••••" in raw_key or not raw_key:
                     existing_match = next(
@@ -277,6 +287,12 @@ class ConfigManager:
                     )
                     if existing_match:
                         raw_key = existing_match.key
+                        if (
+                            lock_id is None
+                            and existing_match.lock_id is not None
+                            and "lock_id" not in item
+                        ):
+                            lock_id = existing_match.lock_id
 
                 if not MAC_PATTERN.match(addr):
                     errors.append(f"Ugyldig MAC-adresse for '{name}': {addr}")
@@ -285,23 +301,34 @@ class ConfigManager:
                         f"Offline-nøkkel for '{name}' må være 32 heksadesimale tegn (16 bytes)."
                     )
                 else:
-                    valid_locks.append(LockSetting(name=name, address=addr, key=raw_key, slot=slot))
+                    valid_locks.append(
+                        LockSetting(
+                            name=name, address=addr, key=raw_key, slot=slot, lock_id=lock_id
+                        )
+                    )
 
             if not errors and valid_locks:
                 if len(valid_locks) == 1:
                     new_env_entries["SNIPPEN_DOORMAN_BLE_ADDRESS"] = valid_locks[0].address
                     new_env_entries["SNIPPEN_DOORMAN_BLE_KEY"] = valid_locks[0].key
                     new_env_entries["SNIPPEN_DOORMAN_BLE_SLOT"] = str(valid_locks[0].slot)
+                    new_env_entries["SNIPPEN_DOORMAN_LOCK_ID"] = (
+                        str(valid_locks[0].lock_id) if valid_locks[0].lock_id is not None else ""
+                    )
                     # Clear multi-locks if only 1
                     new_env_entries["SNIPPEN_DOORMAN_LOCKS"] = ""
                 else:
                     multi_str = ",".join(
-                        f"{lk.name}={lk.address}:{lk.key}:{lk.slot}" for lk in valid_locks
+                        f"{lk.name}={lk.address}:{lk.key}:{lk.slot}:{lk.lock_id if lk.lock_id is not None else ''}"
+                        for lk in valid_locks
                     )
                     new_env_entries["SNIPPEN_DOORMAN_LOCKS"] = multi_str
                     new_env_entries["SNIPPEN_DOORMAN_BLE_ADDRESS"] = valid_locks[0].address
                     new_env_entries["SNIPPEN_DOORMAN_BLE_KEY"] = valid_locks[0].key
                     new_env_entries["SNIPPEN_DOORMAN_BLE_SLOT"] = str(valid_locks[0].slot)
+                    new_env_entries["SNIPPEN_DOORMAN_LOCK_ID"] = (
+                        str(valid_locks[0].lock_id) if valid_locks[0].lock_id is not None else ""
+                    )
 
         if errors:
             return False, errors

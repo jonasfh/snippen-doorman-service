@@ -20,6 +20,7 @@ class LockConfig:
     address: str
     key: str
     slot: int = 1
+    lock_id: int | None = None
 
     def __post_init__(self) -> None:
         self.address = self.address.strip()
@@ -34,6 +35,11 @@ class LockConfig:
             raise ValueError(
                 f"Invalid key slot ({self.slot}) for lock '{self.name}'. Must be >= 1."
             )
+        if self.lock_id is not None:
+            try:
+                self.lock_id = int(self.lock_id)
+            except (ValueError, TypeError):
+                self.lock_id = None
 
 
 def parse_lock_configs(
@@ -41,6 +47,7 @@ def parse_lock_configs(
     default_address: str | None = None,
     default_key: str | None = None,
     default_slot: int = 1,
+    default_lock_id: int | None = None,
 ) -> list[LockConfig]:
     """Parse one or more lock configurations from JSON string or env variables.
 
@@ -61,26 +68,30 @@ def parse_lock_configs(
             try:
                 data = json.loads(raw)
                 if isinstance(data, dict):
-                    # Dict of name -> dict or name -> "addr:key:slot"
+                    # Dict of name -> dict or name -> "addr:key:slot:lock_id"
                     configs: list[LockConfig] = []
                     for name, details in data.items():
                         if isinstance(details, dict):
+                            lid = details.get("lock_id")
                             configs.append(
                                 LockConfig(
                                     name=name,
                                     address=details.get("address", ""),
                                     key=details.get("key", ""),
                                     slot=int(details.get("slot", 1)),
+                                    lock_id=int(lid) if lid is not None else None,
                                 )
                             )
                         elif isinstance(details, str):
                             parts = details.split(":")
+                            lid_val = int(parts[3]) if len(parts) > 3 and parts[3].strip() else None
                             configs.append(
                                 LockConfig(
                                     name=name,
                                     address=parts[0],
                                     key=parts[1],
                                     slot=int(parts[2]) if len(parts) > 2 else 1,
+                                    lock_id=lid_val,
                                 )
                             )
                     return configs
@@ -89,12 +100,14 @@ def parse_lock_configs(
                     for idx, item in enumerate(data):
                         if isinstance(item, dict):
                             name = item.get("name", f"lock_{idx + 1}")
+                            lid = item.get("lock_id")
                             configs.append(
                                 LockConfig(
                                     name=name,
                                     address=item.get("address", ""),
                                     key=item.get("key", ""),
                                     slot=int(item.get("slot", 1)),
+                                    lock_id=int(lid) if lid is not None else None,
                                 )
                             )
                     return configs
@@ -118,17 +131,27 @@ def parse_lock_configs(
                 addr = parts[0].strip()
                 key = parts[1].strip()
                 slot = int(parts[2].strip()) if len(parts) > 2 else 1
-                configs.append(LockConfig(name=name, address=addr, key=key, slot=slot))
+                lid = int(parts[3].strip()) if len(parts) > 3 and parts[3].strip() else None
+                configs.append(LockConfig(name=name, address=addr, key=key, slot=slot, lock_id=lid))
             elif ";" in spec:
                 parts = spec.split(";")
                 addr = parts[0].strip()
                 key = parts[1].strip()
                 slot = int(parts[2].strip()) if len(parts) > 2 else 1
-                configs.append(LockConfig(name=name, address=addr, key=key, slot=slot))
+                lid = int(parts[3].strip()) if len(parts) > 3 and parts[3].strip() else None
+                configs.append(LockConfig(name=name, address=addr, key=key, slot=slot, lock_id=lid))
             else:
                 tokens = spec.split(":")
                 # A standard MAC address has 6 octets: XX:XX:XX:XX:XX:XX
-                if len(tokens) >= 8:
+                if len(tokens) >= 9:
+                    addr = ":".join(tokens[:6]).strip()
+                    key = tokens[6].strip()
+                    slot = int(tokens[7].strip())
+                    lid = int(tokens[8].strip()) if tokens[8].strip() else None
+                    configs.append(
+                        LockConfig(name=name, address=addr, key=key, slot=slot, lock_id=lid)
+                    )
+                elif len(tokens) >= 8:
                     addr = ":".join(tokens[:6]).strip()
                     key = tokens[6].strip()
                     slot = int(tokens[7].strip())
@@ -137,6 +160,14 @@ def parse_lock_configs(
                     addr = ":".join(tokens[:6]).strip()
                     key = tokens[6].strip()
                     configs.append(LockConfig(name=name, address=addr, key=key, slot=1))
+                elif len(tokens) >= 4:
+                    addr = tokens[0].strip()
+                    key = tokens[1].strip()
+                    slot = int(tokens[2].strip()) if tokens[2].strip() else 1
+                    lid = int(tokens[3].strip()) if tokens[3].strip() else None
+                    configs.append(
+                        LockConfig(name=name, address=addr, key=key, slot=slot, lock_id=lid)
+                    )
                 elif len(tokens) >= 2:
                     addr = tokens[0].strip()
                     key = tokens[1].strip()
@@ -153,6 +184,7 @@ def parse_lock_configs(
                 address=default_address,
                 key=default_key,
                 slot=default_slot,
+                lock_id=default_lock_id,
             )
         ]
 

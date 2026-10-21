@@ -43,6 +43,8 @@ The doorman service can be configured via CLI flags or environment variables:
 | Sync Interval | `SNIPPEN_DOORMAN_SYNC_INTERVAL` | `5.0` | Synchronization interval in seconds |
 | Sync Timeout | `SNIPPEN_DOORMAN_SYNC_TIMEOUT` | `10.0` | HTTP request timeout in seconds |
 | Sync Enabled | `SNIPPEN_DOORMAN_SYNC_ENABLED` | `true` | Enable/disable automatic Snippen synchronization |
+| Remote Lock ID | `SNIPPEN_DOORMAN_LOCK_ID` | *(None)* | Primary lock ID in WordPress Booking API (spec #47) |
+| Multi-Lock Config | `SNIPPEN_DOORMAN_LOCKS` | *(None)* | Multi-door configuration string or JSON array with lock IDs |
 
 ---
 
@@ -138,14 +140,17 @@ python tools/parse_ha_keys.py --log-file ~/Downloads/home-assistant_*.log --outp
 2. `DoormanSyncEngine`: Change detection and battery-saving sleep logic (#29). Unchanged reservations produce zero BLE communication.
 3. `PinProvisioner` & `SlotAllocator`: Just-In-Time (JIT) slot management (guest slots 9 down to 3) within configurable lead time (`--lead-time`, default 60m).
 4. `YaleLockClient`: Encrypted Bluetooth LE communication programming PIN codes and opportunistically synchronizing lock RTC clocks (`sync_rtc=True`) and capturing battery telemetry (#30).
-5. **Multi-lock support**: Manage single lock or multiple locks simultaneously (e.g. ytterdør + fellesrom) with `--locks` or `SNIPPEN_DOORMAN_LOCKS`.
+5. **Multi-lock & Multi-entrance support**: Manage single or multiple doors simultaneously mapped to entrance IDs in `snippen-booking` (`GET /door/locks` and `GET /door/bookings?lock_id=<id>`). Pass `--lock-id` or configure doors via `--locks` or `SNIPPEN_DOORMAN_LOCKS`.
 
 ```bash
 # Run service daemon with configured locks and default SQLite storage
 snippen-doorman service run
 
-# Run with multiple locks simultaneously (e.g. 2 doors on Snippen)
-snippen-doorman service run --locks "ytterdor=AA:BB:CC:DD:EE:01:KEY1:1,fellesrom=AA:BB:CC:DD:EE:02:KEY2:1"
+# Target specific lock ID(s) from WordPress Booking API
+snippen-doorman service run --lock-id 1 --lock-id 2
+
+# Run with multiple locks simultaneously with mapped lock IDs
+snippen-doorman service run --locks "ytterdor=AA:BB:CC:DD:EE:01:KEY1:1:1,kjeller=AA:BB:CC:DD:EE:02:KEY2:1:2"
 
 # Run a single synchronization tick and print detailed summary (polling + lock provisioning + telemetry)
 snippen-doorman service sync-once

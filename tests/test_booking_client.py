@@ -154,3 +154,65 @@ def test_network_error_raised(client):
         pytest.raises(BookingNetworkError, match="Network communication failed"),
     ):
         client.fetch_bookings()
+
+
+def test_fetch_locks_success(client):
+    mock_payload = {
+        "locks": [
+            {
+                "id": 1,
+                "name": "Hovedinngang",
+                "handles_objects": [
+                    {"id": 1, "name": "Peisestuen"},
+                    {"id": 2, "name": "Festsalen"},
+                ],
+            },
+            {
+                "id": 2,
+                "name": "Badstuedør",
+                "handles_objects": [{"id": 3, "name": "Badstue"}],
+            },
+        ]
+    }
+    raw_bytes = json.dumps(mock_payload).encode("utf-8")
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = raw_bytes
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        locks = client.fetch_locks()
+        assert len(locks) == 2
+        assert locks[0].id == 1
+        assert locks[0].name == "Hovedinngang"
+        assert len(locks[0].handles_objects) == 2
+        assert locks[1].id == 2
+        assert locks[1].name == "Badstuedør"
+
+        call_args = mock_urlopen.call_args
+        req = call_args[0][0]
+        assert req.full_url == "https://example.com/wp-json/snippen/v1/door/locks"
+
+
+def test_fetch_locks_handles_empty_or_malformed(client):
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = json.dumps({"locks": [{"invalid": "lock"}]}).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        locks = client.fetch_locks()
+        assert locks == []
+
+
+def test_fetch_bookings_with_lock_id(client):
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = json.dumps({"bookings": []}).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        client.fetch_bookings(lock_id=2)
+        call_args = mock_urlopen.call_args
+        req = call_args[0][0]
+        assert req.full_url == "https://example.com/wp-json/snippen/v1/door/bookings?lock_id=2"
