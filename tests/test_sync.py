@@ -18,8 +18,15 @@ from snippen_doorman.sync import DoormanSyncEngine
 class FakeLockClient:
     """Simulates a physical Yale Lock BLE client for deterministic testing."""
 
-    def __init__(self, address: str = "AA:BB:CC:DD:EE:01") -> None:
+    def __init__(
+        self,
+        address: str = "AA:BB:CC:DD:EE:01",
+        local_name: str | None = None,
+        lock_id: str | None = None,
+    ) -> None:
         self.address = address
+        self.local_name = local_name
+        self.lock_id = lock_id
         self.pins: dict[int, str] = {}
         self.add_pin_calls: list[dict] = []
         self.delete_pin_calls: list[dict] = []
@@ -481,3 +488,70 @@ async def test_multi_lock_synchronization(sync_env):
     # Both locks got telemetry recorded
     assert sync_env["db"].get_lock_status("AA:BB:CC:DD:EE:01") is not None
     assert sync_env["db"].get_lock_status("AA:BB:CC:DD:EE:02") is not None
+
+
+@pytest.mark.asyncio
+async def test_multi_door_targeted_sync(sync_env):
+    """When lock_ids are configured, each door's reservations are routed to the matching lock."""
+    now = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
+
+    lock1 = FakeLockClient(address="AA:BB:CC:DD:EE:01", local_name="Hoveddør")
+    lock1.lock_id = "1"
+    lock2 = FakeLockClient(address="AA:BB:CC:DD:EE:02", local_name="Badstue")
+    lock2.lock_id = "2"
+
+    multi_provisioner = PinProvisioner(
+        db=sync_env["db"],
+        allocator=sync_env["allocator"],
+        lock_clients=[lock1, lock2],
+        lead_time=timedelta(minutes=60),
+        grace_period=timedelta(minutes=15),
+    )
+
+    multi_engine = DoormanSyncEngine(
+        poller=sync_env["poller"],
+        provisioner=multi_provisioner,
+        store=sync_env["store"],
+        db=sync_env["db"],
+        lock_ids=["1", "2"],
+    )
+
+    # Mock fetch_bookings based on lock_id parameter
+    def mock_fetch(lock_id=None):
+        if str(lock_id) == "1":
+            return [
+                RemoteBooking(
+                    id="book_door1",
+                    start_time=now + timedelta(minutes=30),
+                    end_time=now + timedelta(hours=2),
+                    door_code="111111",
+                )
+            ]
+        elif str(lock_id) == "2":
+            return [
+                RemoteBooking(
+                    id="book_door2",
+                    start_time=now + timedelta(minutes=30),
+                    end_time=now + timedelta(hours=2),
+                    door_code="222222",
+                )
+            ]
+        return []
+
+    sync_env["booking_client"].fetch_bookings.side_effect = mock_fetch
+
+    res = await multi_engine.sync_once(now=now)
+
+    assert "book_door1" in res.scheduled
+    assert "book_door2" in res.scheduled
+    assert len(res.provision.activated) == 2
+
+    # Lock 1 only has door 1's PIN
+    assert 9 in lock1.pins
+    assert lock1.pins[9] == "111111"
+    assert "222222" not in lock1.pins.values()
+
+    # Lock 2 only has door 2's PIN
+    assert 8 in lock2.pins or 9 in lock2.pins
+    assert "222222" in lock2.pins.values()
+    assert "111111" not in lock2.pins.values()

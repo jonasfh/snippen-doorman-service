@@ -126,6 +126,30 @@ def test_web_server_endpoints(tmp_path) -> None:
             assert status_data["primary_lock"]["battery"] == 95
             assert status_data["primary_lock"]["lock_status"] == "LOCKED"
             assert status_data["primary_lock"]["door_status"] == "CLOSED"
+            assert "locks" in status_data
+            assert status_data["locks_count"] == 1
+            assert status_data["locks"][0]["battery"] == 95
+
+        # 9. GET /api/remote-locks
+        from unittest.mock import MagicMock, patch
+
+        from snippen_doorman.booking_client import RemoteLock
+
+        with patch("snippen_doorman.web.server.SnippenBookingClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.fetch_locks.return_value = [
+                RemoteLock(id=1, name="Hoveddør", handles_objects=["Hoveddel"]),
+                RemoteLock(id=2, name="Kjellerdør", handles_objects=["Kjeller"]),
+            ]
+            mock_client_cls.return_value = mock_client
+
+            with urlopen(f"{base_url}/api/remote-locks") as res:
+                assert res.status == 200
+                locks_resp = json.loads(res.read().decode("utf-8"))
+                assert locks_resp["success"] is True
+                assert len(locks_resp["locks"]) == 2
+                assert locks_resp["locks"][0]["id"] == 1
+                assert locks_resp["locks"][0]["name"] == "Hoveddør"
 
     finally:
         server.stop()

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-21
+
+### Added
+- Multi-door and multi-entrance REST API support matching updated `snippen-booking` specification (#47).
+- `RemoteLock` dataclass and `fetch_locks()` method in `SnippenBookingClient` querying `GET /wp-json/snippen/v1/door/locks` (#47).
+- Support for `lock_id` query parameter in `SnippenBookingClient.fetch_bookings(lock_id=...)` (#47).
+- Multi-door configuration with `lock_id` mapping in `LockConfig`, `LockSetting`, `parse_lock_configs`, and `ConfigManager` via `SNIPPEN_DOORMAN_LOCK_ID` and `SNIPPEN_DOORMAN_LOCKS` (`name=MAC:KEY:SLOT:LOCK_ID` or JSON format) (#47).
+- Automatic database schema migration in `SqliteReservationStore` adding `lock_id` column to `reservations` table with audit timestamps (#47).
+- Scoped reservation polling and reconciliation in `BookingPoller` ensuring reservations for one entrance are not pruned when polling another entrance (#47).
+- Door-specific PIN provisioning and revocation routing in `PinProvisioner` targeting the matching `YaleLockClient` (#47).
+- Multi-lock polling loop in `DoormanSyncEngine` iterating through configured lock IDs with battery-saving change detection (#47).
+- CLI `--lock-id` option in `snippen-doorman service run` and `snippen-doorman service sync-once` (#47).
+- Backend endpoint `GET /api/remote-locks` on `DoormanWebServer` for discovering registered locks from WordPress (#47).
+- Extended `/api/status` endpoint to expose telemetry for all configured locks (#47).
+- Web Dashboard enhancements in `html.py`:
+  - "Hent låser fra WordPress Booking API" helper card to query available doors and auto-assign IDs (#47).
+  - Lås-ID input field per door row (#47).
+  - Multi-door overview display card in status tab (#47).
+
 ## [0.13.0] - 2026-10-15
 
 ### Added

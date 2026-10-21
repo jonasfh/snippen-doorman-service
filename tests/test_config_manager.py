@@ -57,7 +57,15 @@ def test_validation_errors(tmp_path) -> None:
         {
             "api_url": "invalid-url",
             "lead_time_minutes": -5,
-            "locks": [{"name": "Door", "address": "not-a-mac", "key": "123", "slot": 1}],
+            "locks": [
+                {
+                    "name": "Door",
+                    "address": "not-a-mac",
+                    "key": "123",
+                    "slot": 1,
+                    "lock_id": -1,
+                }
+            ],
         }
     )
 
@@ -65,3 +73,35 @@ def test_validation_errors(tmp_path) -> None:
     assert any("http://" in e for e in errors)
     assert any("heltall" in e for e in errors)
     assert any("MAC" in e for e in errors)
+    assert any("positivt heltall" in e for e in errors)
+
+
+def test_load_and_update_locks_with_lock_id(tmp_path) -> None:
+    env_file = tmp_path / "locks.env"
+    env_file.write_text(
+        'SNIPPEN_DOORMAN_LOCKS="Hovedinngang=98:1B:B5:0B:BB:35:438b544da1ffd82510a973d5ff9853bb:2:1,Badstue=AA:BB:CC:DD:EE:02:0123456789abcdef0123456789abcdef:1:2"\n'
+    )
+    mgr = ConfigManager(env_file)
+    cfg = mgr.load_config()
+    assert len(cfg.locks) == 2
+    assert cfg.locks[0].lock_id == 1
+    assert cfg.locks[1].lock_id == 2
+
+    # Update lock settings
+    ok, _errors = mgr.update_config(
+        {
+            "locks": [
+                {
+                    "name": "Hovedinngang",
+                    "address": "98:1B:B5:0B:BB:35",
+                    "key": "438b544da1ffd82510a973d5ff9853bb",
+                    "slot": 2,
+                    "lock_id": 10,
+                }
+            ]
+        }
+    )
+    assert ok is True
+    updated = mgr.load_config()
+    assert len(updated.locks) == 1
+    assert updated.locks[0].lock_id == 10

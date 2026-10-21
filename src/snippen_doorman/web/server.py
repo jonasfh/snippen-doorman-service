@@ -203,6 +203,29 @@ class DoormanWebServer:
                             for k, v in cached.items():
                                 if v is not None:
                                     primary_lock_info[k] = v
+                    all_locks_info: list[dict[str, Any]] = []
+                    for lk in cfg.locks:
+                        lk_dict: dict[str, Any] = {
+                            "name": lk.name,
+                            "address": lk.address,
+                            "slot": lk.slot,
+                            "lock_id": lk.lock_id,
+                            "battery": None,
+                            "lock_status": None,
+                            "door_status": None,
+                        }
+                        if parent.db:
+                            st = parent.db.get_lock_status(lk.address)
+                            if st:
+                                lk_dict["battery"] = st.battery
+                                lk_dict["lock_status"] = st.lock_status
+                                lk_dict["door_status"] = st.door_status
+                        cached_lk = parent._lock_status_cache.get(lk.address)
+                        if cached_lk:
+                            for k, v in cached_lk.items():
+                                if v is not None:
+                                    lk_dict[k] = v
+                        all_locks_info.append(lk_dict)
 
                     wifi_status = parent.wifi_manager.get_status()
                     ble_active = parent.ble_peripheral.is_active if parent.ble_peripheral else False
@@ -216,6 +239,7 @@ class DoormanWebServer:
                         "uptime": uptime_str,
                         "events": parent.get_events(),
                         "primary_lock": primary_lock_info,
+                        "locks": all_locks_info,
                         "locks_count": len(cfg.locks),
                         "ble_setup_active": ble_active,
                         "ble_setup_remaining_seconds": ble_remaining,
@@ -231,6 +255,31 @@ class DoormanWebServer:
                 if self.path == "/api/config":
                     cfg = parent.config_manager.load_config()
                     self._send_json(200, parent.config_manager.to_safe_dict(cfg))
+                    return
+
+                if self.path == "/api/remote-locks":
+                    cfg = parent.config_manager.load_config()
+                    client = SnippenBookingClient(
+                        api_url=cfg.api_url,
+                        api_token=cfg.api_token,
+                        timeout_seconds=10.0,
+                    )
+                    try:
+                        remote_locks = client.fetch_locks()
+                        locks_data = [
+                            {
+                                "id": rl.id,
+                                "name": rl.name,
+                                "handles_objects": rl.handles_objects,
+                            }
+                            for rl in remote_locks
+                        ]
+                        parent.record_event(f"Hentet {len(remote_locks)} lås(er) fra Booking API.")
+                        self._send_json(200, {"success": True, "locks": locks_data})
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Kunne ikke hente låser fra Booking API: %s", exc)
+                        parent.record_event(f"Kunne ikke hente låser fra Booking API: {exc}")
+                        self._send_json(500, {"success": False, "error": str(exc), "locks": []})
                     return
 
                 self._send_json(404, {"error": "Not found"})

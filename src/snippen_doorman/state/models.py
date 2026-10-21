@@ -69,6 +69,7 @@ class ReservationRecord:
     pin: str | None = None
     status: ReservationStatus = ReservationStatus.ACTIVE
     content_hash: str = ""
+    lock_id: str | None = None
     last_seen_at: datetime | None = None
     created_at: datetime | None = None
     modified_at: datetime | None = None
@@ -86,6 +87,8 @@ class ReservationRecord:
             self.valid_to = self.valid_to.astimezone(UTC)
         if not self.content_hash:
             self.content_hash = compute_content_hash(self.valid_from, self.valid_to, self.pin)
+        if self.lock_id is not None:
+            self.lock_id = str(self.lock_id)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert record to a JSON-serializable dictionary."""
@@ -108,6 +111,7 @@ class ReservationRecord:
             pin=data.get("pin"),
             status=ReservationStatus(data.get("status", ReservationStatus.ACTIVE)),
             content_hash=data.get("content_hash", ""),
+            lock_id=str(data["lock_id"]) if data.get("lock_id") is not None else None,
             last_seen_at=parse_utc_iso(data.get("last_seen_at")),
             created_at=parse_utc_iso(data.get("created_at")),
             modified_at=parse_utc_iso(data.get("modified_at")),

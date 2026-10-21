@@ -48,6 +48,17 @@ Access codes can be generated days or weeks in advance for tenants, but are only
 
 ## Data Model
 
+### Reservations Table (`reservations`)
+- `id`: Unique external reservation reference (string)
+- `pin`: 6-digit numeric access code
+- `valid_from`: Start of reservation validity (UTC ISO-8601)
+- `valid_to`: End of reservation validity (UTC ISO-8601)
+- `status`: Lifecycle state (`ACTIVE`, `REMOVED`)
+- `content_hash`: SHA-256 hash of reservation contents for zero-BLE change detection
+- `lock_id`: Optional remote lock reference ID matching WordPress entrance
+- `created_at`: Creation timestamp (UTC ISO-8601)
+- `modified_at`: Last modification timestamp (UTC ISO-8601)
+
 ### PIN Reservations Table (`pins`)
 - `id`: Integer primary key (autoincrement)
 - `booking_id`: Unique external reservation reference
@@ -56,6 +67,7 @@ Access codes can be generated days or weeks in advance for tenants, but are only
 - `status`: Lifecycle state (`SCHEDULED`, `PROVISIONED`, `REVOKED`, `EXPIRED`)
 - `valid_from`: Start of reservation validity (UTC ISO-8601)
 - `valid_to`: End of reservation validity (UTC ISO-8601)
+- `lock_id`: Optional remote lock reference ID
 - `created_at`: Creation timestamp (UTC ISO-8601)
 - `modified_at`: Last modification timestamp (UTC ISO-8601)
 
@@ -68,6 +80,8 @@ Access codes can be generated days or weeks in advance for tenants, but are only
 ## Integration Points
 
 ### Snippen Booking API
+- Remote Lock Discovery: `GET /wp-json/snippen/v1/door/locks`
+- Door-Specific Bookings Polling: `GET /wp-json/snippen/v1/door/bookings?lock_id=<id>`
 - Receive booking notifications
 - Update access code status
 - Report access events

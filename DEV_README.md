@@ -93,6 +93,27 @@ snippen-doorman-service/
 
 For high-level system architecture, communication flows, and boundaries, see [docs/architecture.md](docs/architecture.md), [docs/yale_ble_protocol.md](docs/yale_ble_protocol.md), and [docs/yale_offline_key_extraction.md](docs/yale_offline_key_extraction.md).
 
+## Multi-Door & Entrance Architecture (Spec #47)
+
+In `snippen-booking`, multiple physical locks/entrances can be registered (e.g. Hoveddel, Kjeller). The integration follows these conventions:
+
+- **Remote Lock Discovery (`GET /wp-json/snippen/v1/door/locks`)**:
+  Returns all registered locks:
+  ```json
+  [
+    { "id": 1, "name": "Hoveddør", "handles_objects": ["Hoveddel"] },
+    { "id": 2, "name": "Kjellerinngang", "handles_objects": ["Kjeller"] }
+  ]
+  ```
+- **Targeted Bookings Polling (`GET /wp-json/snippen/v1/door/bookings?lock_id=<id>`)**:
+  When multiple locks exist, `snippen-booking` requires `lock_id` and filters bookings only for reservations that grant access through that specific door.
+- **Reservation Isolation**:
+  `ReservationRecord` in local SQLite storage tracks `lock_id`. Polling lock A preserves active records belonging to lock B.
+- **BLE Provisioning Targeting**:
+  `PinProvisioner` directs PIN provisioning and revocation to the matching `YaleLockClient` (by matching `lock_id`, name, or address).
+- **Web UI & REST Helper (`GET /api/remote-locks`)**:
+  The embedded web dashboard queries remote locks directly from WordPress, allowing the administrator to inspect available entrance IDs and assign them with one click.
+
 ## Development Setup
 
 1. **Prerequisites**: Python 3.14+, `pip`, and Linux with BlueZ for Bluetooth operations.

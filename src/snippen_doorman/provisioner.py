@@ -84,29 +84,44 @@ class PinProvisioner:
                         exc,
                     )
 
-    async def _get_lock_clients(self) -> list[Any]:
-        """Resolve all active lock client instances."""
+    async def _get_lock_clients(self, lock_id: str | int | None = None) -> list[Any]:
+        """Resolve all active lock client instances, optionally targeted by lock_id."""
+        clients: list[Any] = []
         if self.lock_clients is not None:
             if isinstance(self.lock_clients, dict):
-                return list(self.lock_clients.values())
-            return list(self.lock_clients)
-        if self.lock_client is not None:
-            return [self.lock_client]
-        if self.lock_client_factory is not None:
+                clients = list(self.lock_clients.values())
+            else:
+                clients = list(self.lock_clients)
+        elif self.lock_client is not None:
+            clients = [self.lock_client]
+        elif self.lock_client_factory is not None:
             res = self.lock_client_factory()
             if inspect.isawaitable(res):
                 res = await res
             if isinstance(res, (list, tuple)):
-                return list(res)
-            if isinstance(res, dict):
-                return list(res.values())
-            if res is not None:
-                return [res]
-        return []
+                clients = list(res)
+            elif isinstance(res, dict):
+                clients = list(res.values())
+            elif res is not None:
+                clients = [res]
 
-    async def _get_lock_client(self) -> Any:
+        if lock_id is not None and lock_id != "default" and clients:
+            lid_str = str(lock_id)
+            matched = [
+                c
+                for c in clients
+                if str(getattr(c, "lock_id", None)) == lid_str
+                or getattr(c, "local_name", None) == lid_str
+                or getattr(c, "address", None) == lid_str
+            ]
+            if matched:
+                return matched
+
+        return clients
+
+    async def _get_lock_client(self, lock_id: str | int | None = None) -> Any:
         """Resolve a single primary lock client (for backward compatibility)."""
-        clients = await self._get_lock_clients()
+        clients = await self._get_lock_clients(lock_id=lock_id)
         return clients[0] if clients else None
 
     def _record_telemetry(self, client: Any) -> None:
@@ -290,7 +305,7 @@ class PinProvisioner:
             return rec
 
         if rec.status in (PinStatus.PROVISIONED, PinStatus.PENDING_UPDATE) and rec.slot is not None:
-            clients = await self._get_lock_clients()
+            clients = await self._get_lock_clients(lock_id=rec.lock_id or lock_id)
             failed = False
             if clients:
                 for client in clients:
@@ -344,7 +359,7 @@ class PinProvisioner:
         # Step 1: Retry pending revocations
         pending_revokes = self.db.list_pins(status=PinStatus.PENDING_REVOKE)
         for rec in pending_revokes:
-            clients = await self._get_lock_clients()
+            clients = await self._get_lock_clients(lock_id=rec.lock_id)
             failed = False
             if clients and rec.slot is not None:
                 for client in clients:
@@ -368,7 +383,7 @@ class PinProvisioner:
         provisioned = self.db.list_pins(status=PinStatus.PROVISIONED)
         for rec in provisioned:
             if now > rec.valid_to + self.grace_period:
-                clients = await self._get_lock_clients()
+                clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 if clients and rec.slot is not None:
                     for client in clients:
@@ -416,7 +431,7 @@ class PinProvisioner:
                         result.errors.append(msg)
                         continue
 
-                clients = await self._get_lock_clients()
+                clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 for client in clients:
                     try:
@@ -442,7 +457,7 @@ class PinProvisioner:
 
             elif now < earliest_act:
                 # Booking moved to future -> deprovision from lock, release slot, mark SCHEDULED
-                clients = await self._get_lock_clients()
+                clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 if clients and rec.slot is not None:
                     for client in clients:
@@ -469,7 +484,7 @@ class PinProvisioner:
                     result.deprovisioned.append(rec.booking_id)
             else:
                 # Past booking window -> deprovision and expire
-                clients = await self._get_lock_clients()
+                clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 if clients and rec.slot is not None:
                     for client in clients:
@@ -520,7 +535,7 @@ class PinProvisioner:
                     result.errors.append(msg)
                     continue
 
-                clients = await self._get_lock_clients()
+                clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 if clients:
                     for client in clients:
