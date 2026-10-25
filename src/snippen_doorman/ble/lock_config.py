@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -48,15 +50,21 @@ def parse_lock_configs(
     default_key: str | None = None,
     default_slot: int = 1,
     default_lock_id: int | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> list[LockConfig]:
     """Parse one or more lock configurations from JSON string or env variables.
 
     Supports:
-    1. JSON list or dict in locks_val, e.g.:
+    1. Discrete per-lock environment variables, e.g.:
+       DOORMAN_LOCK_1_NAME="Festsalen"
+       DOORMAN_LOCK_1_ADDRESS="98:1B:B5:0B:BB:35"
+       DOORMAN_LOCK_1_KEY="..."
+       DOORMAN_LOCK_1_SLOT=4
+    2. JSON list or dict in locks_val, e.g.:
        '[{"name": "ytterdor", "address": "AA:BB:CC:DD:EE:01", "key": "...", "slot": 1}, ...]'
-    2. Comma-separated string:
+    3. Comma-separated string:
        'ytterdor=AA:BB:CC:DD:EE:01:0123456789abcdef0123456789abcdef:1,fellesrom=...'
-    3. Fallback to default_address, default_key, default_slot (single-lock).
+    4. Fallback to default_address, default_key, default_slot (single-lock).
 
     Returns:
         List of validated LockConfig objects.
@@ -175,6 +183,51 @@ def parse_lock_configs(
                     configs.append(LockConfig(name=name, address=addr, key=key, slot=slot))
         if configs:
             return configs
+
+    # Check for discrete per-lock environment variables (e.g. DOORMAN_LOCK_1_ADDRESS, DOORMAN_LOCK_1_KEY)
+    target_env = env if env is not None else os.environ
+    pattern = re.compile(
+        r"^(?:SNIPPEN_)?(?:DOORMAN_)?LOCK_([A-Za-z0-9_]+)_(ADDRESS|KEY|SLOT|LOCK_ID|NAME)$",
+        re.IGNORECASE,
+    )
+    grouped: dict[str, dict[str, str]] = {}
+    for k, v in target_env.items():
+        m = pattern.match(k.strip())
+        if m:
+            tag, field = m.group(1), m.group(2).upper()
+            if tag not in grouped:
+                grouped[tag] = {}
+            grouped[tag][field] = v.strip()
+
+    if grouped:
+        discrete_configs: list[LockConfig] = []
+
+        def sort_key(tag: str) -> tuple[int, int | str]:
+            if tag.isdigit():
+                return (0, int(tag))
+            return (1, tag.lower())
+
+        for tag in sorted(grouped.keys(), key=sort_key):
+            data = grouped[tag]
+            addr = data.get("ADDRESS", "")
+            key = data.get("KEY", "")
+            if addr and key:
+                name = data.get("NAME") or (tag if not tag.isdigit() else f"lock_{tag}")
+                try:
+                    slot = int(data.get("SLOT", "1"))
+                except (ValueError, TypeError):
+                    slot = 1
+                raw_lid = data.get("LOCK_ID")
+                try:
+                    lid = int(raw_lid) if raw_lid and raw_lid.strip() else None
+                except (ValueError, TypeError):
+                    lid = None
+                discrete_configs.append(
+                    LockConfig(name=name, address=addr, key=key, slot=slot, lock_id=lid)
+                )
+
+        if discrete_configs:
+            return discrete_configs
 
     # Fallback to single lock from default address and key
     if default_address and default_key:

@@ -128,12 +128,14 @@ class ConfigManager:
         except ValueError:
             single_lock_id = None
 
+        merged_env = {**env_map, **os.environ}
         parsed_locks = parse_lock_configs(
             locks_val=multi_locks_str,
             default_address=single_addr if single_addr else None,
             default_key=single_key if single_key else None,
             default_slot=single_slot,
             default_lock_id=single_lock_id,
+            env=merged_env,
         )
         locks: list[LockSetting] = [
             LockSetting(

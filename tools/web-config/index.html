@@ -40,6 +40,10 @@
       <p class="card-desc">
         Trykk på den fysiske knappen på Raspberry Pi (eller start den på nytt) for å aktivere oppsettmodus i 10 minutter, og trykk koble til.
       </p>
+      <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem;">
+        <input type="checkbox" id="accept-all-devices" checked>
+        <label for="accept-all-devices" style="cursor: pointer;">Vis alle Bluetooth-enheter (uten filter)</label>
+      </div>
       <button class="btn btn-primary" id="btn-connect">Koble til Doorman Gateway</button>
       <button class="btn btn-danger" id="btn-disconnect" style="display: none;">Koble fra</button>
     </div>
@@ -80,7 +84,7 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js?v=2"></script>
   <script>
     if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
