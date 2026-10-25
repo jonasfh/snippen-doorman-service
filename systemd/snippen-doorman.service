@@ -1,7 +1,7 @@
 [Unit]
 Description=Snippen Doorman Access Control Service
-After=network-online.target bluetooth.target
-Wants=network-online.target bluetooth.target
+After=network.target bluetooth.target
+Wants=network.target bluetooth.target
 Documentation=https://github.com/jonasfh/snippen-doorman-service
 
 [Service]

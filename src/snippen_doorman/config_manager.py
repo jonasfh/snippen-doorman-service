@@ -128,14 +128,27 @@ class ConfigManager:
         except ValueError:
             single_lock_id = None
 
-        merged_env = {**env_map, **os.environ}
+        has_file_locks = (
+            any(
+                re.match(
+                    r"^(?:SNIPPEN_)?(?:DOORMAN_)?LOCK_([A-Za-z0-9_]+)_(ADDRESS|KEY|SLOT|LOCK_ID|NAME)$",
+                    k,
+                    re.IGNORECASE,
+                )
+                for k in env_map
+            )
+            or bool(env_map.get("SNIPPEN_DOORMAN_LOCKS"))
+            or bool(env_map.get("SNIPPEN_DOORMAN_BLE_ADDRESS"))
+        )
+
+        target_env = env_map if has_file_locks else {**os.environ, **env_map}
         parsed_locks = parse_lock_configs(
             locks_val=multi_locks_str,
             default_address=single_addr if single_addr else None,
             default_key=single_key if single_key else None,
             default_slot=single_slot,
             default_lock_id=single_lock_id,
-            env=merged_env,
+            env=target_env,
         )
         locks: list[LockSetting] = [
             LockSetting(

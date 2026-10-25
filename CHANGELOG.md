@@ -13,9 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite Write-Ahead Logging (WAL) mode (`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`) in `Database` and `SqliteReservationStore` for power-failure resilience and concurrent read-access (#52).
 - Automatic startup database integrity check with safe corrupt file backup recovery (#52).
 - Explicit data directory creation with `0750` permissions in `scripts/install_pi.sh` (#52).
+- Stateful network resilience in `DoormanSyncEngine`: when Wi-Fi or the booking API is unreachable, the daemon logs a warning once and operates in offline mode using the local SQLite database to provision scheduled PINs when due, automatically resuming online synchronization when connectivity is restored (#53).
+- Multi-door BLE fault isolation ensuring communication failures on one lock do not prevent or delay provisioning to other configured locks (#53).
 
 ### Changed
 - Updated `default.env` to document discrete per-lock environment variable configuration (#50).
+- Updated `snippen-doorman.service` dependencies from `network-online.target` to `network.target` to ensure fast boot and immediate local offline operation without stalling for network availability (#53).
 
 ## [0.14.0] - 2026-10-21
 

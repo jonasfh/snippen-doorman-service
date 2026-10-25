@@ -56,6 +56,7 @@ class DoormanSyncEngine:
         self.db = db
         self.lock_id = str(lock_id) if lock_id is not None else "default"
         self.lock_ids = [str(lid) for lid in lock_ids if lid is not None] if lock_ids else None
+        self._network_down: bool = False
 
     async def sync_once(self, now: datetime | None = None) -> SyncTickResult:
         """Execute a full synchronization cycle: poll remote, reconcile queues, and provision lock.
@@ -95,6 +96,7 @@ class DoormanSyncEngine:
         )
 
         all_poll_res = PollTickResult()
+        has_network_error = False
 
         # Step 1 & 2: Poll each door and reconcile changes
         for lid in target_locks:
@@ -106,9 +108,11 @@ class DoormanSyncEngine:
                 all_poll_res.unchanged.extend(poll_res.unchanged)
                 all_poll_res.errors.extend(poll_res.errors)
                 result.errors.extend(poll_res.errors)
-            except Exception as exc:
+                if poll_res.errors:
+                    has_network_error = True
+            except Exception as exc:  # noqa: BLE001
+                has_network_error = True
                 msg = f"Unexpected failure in booking polling for lock {lid}: {exc}"
-                logger.exception(msg)
                 result.errors.append(msg)
                 poll_res = PollTickResult(errors=[msg])
 
@@ -149,6 +153,20 @@ class DoormanSyncEngine:
                     result.revoked_schedules.append(booking_id)
                 except KeyError:
                     pass
+
+        # Stateful network logging across all locks
+        if has_network_error:
+            if not self._network_down:
+                logger.warning(
+                    "Booking API unreachable (WiFi or internet connection down). Operating in offline mode using local cache."
+                )
+                self._network_down = True
+            else:
+                logger.debug("Booking API still unreachable in offline mode.")
+        else:
+            if self._network_down:
+                logger.info("Booking API connection restored. Resuming online synchronization.")
+                self._network_down = False
 
         result.poll = all_poll_res
 
