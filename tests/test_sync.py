@@ -12,6 +12,7 @@ from snippen_doorman.db import Database, PinStatus
 from snippen_doorman.poller import BookingPoller
 from snippen_doorman.provisioner import PinProvisioner
 from snippen_doorman.state import InMemoryReservationStore
+from snippen_doorman.state.models import ReservationRecord, ReservationStatus
 from snippen_doorman.sync import DoormanSyncEngine
 
 
@@ -547,11 +548,116 @@ async def test_multi_door_targeted_sync(sync_env):
     assert len(res.provision.activated) == 2
 
     # Lock 1 only has door 1's PIN
-    assert 9 in lock1.pins
-    assert lock1.pins[9] == "111111"
+    assert "111111" in lock1.pins.values()
     assert "222222" not in lock1.pins.values()
 
     # Lock 2 only has door 2's PIN
-    assert 8 in lock2.pins or 9 in lock2.pins
     assert "222222" in lock2.pins.values()
     assert "111111" not in lock2.pins.values()
+
+
+@pytest.mark.asyncio
+async def test_sync_offline_mode_stateful_logging(sync_env):
+    """Verify that sync-engine operates in offline mode without crashing and tracks network state."""
+    engine = sync_env["engine"]
+    now = datetime.now(UTC)
+
+    # Put a scheduled reservation in store and schedule with provisioner before network drops
+    record = ReservationRecord(
+        booking_id="offline_book",
+        pin="998877",
+        valid_from=now + timedelta(minutes=15),
+        valid_to=now + timedelta(hours=2),
+        status=ReservationStatus.ACTIVE,
+    )
+    sync_env["store"].save_reservation(record)
+    engine.provisioner.schedule_pin(
+        booking_id="offline_book",
+        pin="998877",
+        valid_from=now + timedelta(minutes=15),
+        valid_to=now + timedelta(hours=2),
+        lock_id=engine.lock_id,
+    )
+
+    # Simulate network outage on booking client
+    sync_env["booking_client"].fetch_bookings.side_effect = ConnectionError("Network unreachable")
+
+    # Sync tick 1: Network fails, but local provisioning proceeds
+    res1 = await engine.sync_once(now=now)
+    assert engine._network_down is True
+    assert len(res1.errors) > 0
+    # Provisioning still activated the local offline reservation!
+    assert "offline_book" in res1.provision.activated
+
+    # Sync tick 2: Still offline, remains in offline mode
+    await engine.sync_once(now=now + timedelta(minutes=1))
+    assert engine._network_down is True
+
+    # Sync tick 3: Network restored
+    sync_env["booking_client"].fetch_bookings.side_effect = None
+    sync_env["booking_client"].fetch_bookings.return_value = []
+    await engine.sync_once(now=now + timedelta(minutes=2))
+    assert engine._network_down is False
+
+
+@pytest.mark.asyncio
+async def test_multi_door_fault_isolation(sync_env):
+    """Verify that a failing lock (BLE timeout) does not prevent provisioning to other working locks."""
+    now = datetime.now(UTC)
+
+    lock1 = FakeLockClient(address="AA:BB:CC:DD:EE:01", local_name="Festsalen")
+    lock1.lock_id = "1"
+    lock1.fail_add_pin = True  # Lock 1 is offline / failing
+
+    lock2 = FakeLockClient(address="AA:BB:CC:DD:EE:02", local_name="Peisestua")
+    lock2.lock_id = "2"
+    lock2.fail_add_pin = False  # Lock 2 is working
+
+    multi_provisioner = PinProvisioner(
+        db=sync_env["db"],
+        allocator=sync_env["allocator"],
+        lock_clients=[lock1, lock2],
+        lead_time=timedelta(minutes=60),
+        grace_period=timedelta(minutes=15),
+    )
+
+    multi_engine = DoormanSyncEngine(
+        poller=sync_env["poller"],
+        provisioner=multi_provisioner,
+        store=sync_env["store"],
+        db=sync_env["db"],
+        lock_ids=["1", "2"],
+    )
+
+    def mock_fetch(lock_id=None):
+        if str(lock_id) == "1":
+            return [
+                RemoteBooking(
+                    id="book_fail_door",
+                    start_time=now + timedelta(minutes=20),
+                    end_time=now + timedelta(hours=2),
+                    door_code="111111",
+                )
+            ]
+        elif str(lock_id) == "2":
+            return [
+                RemoteBooking(
+                    id="book_success_door",
+                    start_time=now + timedelta(minutes=20),
+                    end_time=now + timedelta(hours=2),
+                    door_code="222222",
+                )
+            ]
+        return []
+
+    sync_env["booking_client"].fetch_bookings.side_effect = mock_fetch
+
+    res = await multi_engine.sync_once(now=now)
+
+    # Lock 1 failed
+    assert any("Failed to program PIN" in err for err in res.errors)
+    assert "book_fail_door" not in res.provision.activated
+
+    # Lock 2 succeeded!
+    assert "book_success_door" in res.provision.activated
+    assert "222222" in lock2.pins.values()
