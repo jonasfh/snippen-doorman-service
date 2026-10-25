@@ -62,9 +62,11 @@ usermod -aG bluetooth,netdev "${SERVICE_USER}" || true
 # 4. Set up directory hierarchy
 echo "📁 [3/7] Setting up installation directory at ${INSTALL_DIR}..."
 mkdir -p "${INSTALL_DIR}"
+mkdir -p "${INSTALL_DIR}/data"
 mkdir -p "${CONFIG_DIR}"
 chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${INSTALL_DIR}"
 chmod 755 "${INSTALL_DIR}"
+chmod 750 "${INSTALL_DIR}/data"
 
 # 5. Set up Python virtual environment and install package
 echo "🐍 [4/7] Setting up Python virtual environment..."

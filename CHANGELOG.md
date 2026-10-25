@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Discrete per-lock environment variables support in `lock_config.py` and `config_manager.py` (`DOORMAN_LOCK_<N>_NAME`, `_ADDRESS`, `_KEY`, `_SLOT`, `_LOCK_ID`), providing a human-readable and systemd `EnvironmentFile` friendly alternative to comma-separated multi-lock strings (#50).
 - Option to disable device name filtering and accept all BLE devices in `tools/web-config` PWA for easier initial hardware discovery (#50).
+- SQLite Write-Ahead Logging (WAL) mode (`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`) in `Database` and `SqliteReservationStore` for power-failure resilience and concurrent read-access (#52).
+- Automatic startup database integrity check with safe corrupt file backup recovery (#52).
+- Explicit data directory creation with `0750` permissions in `scripts/install_pi.sh` (#52).
 
 ### Changed
 - Updated `default.env` to document discrete per-lock environment variable configuration (#50).

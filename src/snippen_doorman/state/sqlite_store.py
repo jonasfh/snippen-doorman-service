@@ -30,6 +30,14 @@ class SqliteReservationStore:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        if self.db_path != ":memory:":
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL;")
+                self._conn.execute("PRAGMA synchronous=NORMAL;")
+            except sqlite3.Error as exc:
+                logger.warning(
+                    "Could not set SQLite PRAGMA journal_mode=WAL in reservation store: %s", exc
+                )
         self._init_schema()
 
     def _init_schema(self) -> None:
