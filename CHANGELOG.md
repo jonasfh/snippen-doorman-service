@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-10-25
+
+### Added
+- Discrete per-lock environment variables support in `lock_config.py` and `config_manager.py` (`DOORMAN_LOCK_<N>_NAME`, `_ADDRESS`, `_KEY`, `_SLOT`, `_LOCK_ID`), providing a human-readable and systemd `EnvironmentFile` friendly alternative to comma-separated multi-lock strings (#50).
+- Option to disable device name filtering and accept all BLE devices in `tools/web-config` PWA for easier initial hardware discovery (#50).
+
+### Changed
+- Updated `default.env` to document discrete per-lock environment variable configuration (#50).
+
 ## [0.14.0] - 2026-10-21
 
 ### Added

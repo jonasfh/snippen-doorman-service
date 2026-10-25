@@ -59,21 +59,34 @@ export class SnippenBLEClient extends EventTarget {
       return { deviceName: this.device.name, deviceId: this.device.id };
     }
 
-    const filters = options.filters || [
-      { namePrefix: DEVICE_NAME_PREFIX },
-      { services: [SERVICE_UUID] },
-    ];
+    const acceptAllDevices = options.acceptAllDevices ?? false;
+    const requestOptions = acceptAllDevices
+      ? {
+          acceptAllDevices: true,
+          optionalServices: [SERVICE_UUID],
+        }
+      : {
+          filters: options.filters || [
+            { namePrefix: DEVICE_NAME_PREFIX },
+            { services: [SERVICE_UUID] },
+          ],
+          optionalServices: [SERVICE_UUID],
+        };
 
     try {
-      this.device = await navigator.bluetooth.requestDevice({
-        filters,
-        optionalServices: [SERVICE_UUID],
-      });
+      this.device = await navigator.bluetooth.requestDevice(requestOptions);
 
       this.device.addEventListener('gattserverdisconnected', this._onDisconnectedBound);
 
       this.server = await this.device.gatt.connect();
-      this.service = await this.server.getPrimaryService(SERVICE_UUID);
+
+      try {
+        this.service = await this.server.getPrimaryService(SERVICE_UUID);
+      } catch (err) {
+        throw new Error(
+          `Koblet til "${this.device.name || this.device.id}", men fant ikke Snippen-servicen (${SERVICE_UUID}). Er dette riktig enhet? (${err.message})`
+        );
+      }
 
       this.charStatus = await this.service.getCharacteristic(CHAR_STATUS_UUID);
       this.charCommand = await this.service.getCharacteristic(CHAR_COMMAND_UUID);

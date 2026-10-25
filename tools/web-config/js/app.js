@@ -23,6 +23,7 @@ const dashboardCard = document.getElementById('dashboard-card');
 const dashboardLink = document.getElementById('dashboard-link');
 const btnApplyExit = document.getElementById('btn-apply-exit');
 const simCheckbox = document.getElementById('sim-mode');
+const acceptAllCheckbox = document.getElementById('accept-all-devices');
 
 function showFeedback(msg, isSuccess = true) {
   feedbackBanner.textContent = msg;
@@ -86,7 +87,8 @@ btnConnect.addEventListener('click', async () => {
   try {
     btnConnect.disabled = true;
     btnConnect.textContent = 'Kobler til...';
-    await client.connect();
+    const acceptAll = acceptAllCheckbox ? acceptAllCheckbox.checked : true;
+    await client.connect({ acceptAllDevices: acceptAll });
   } catch (err) {
     showFeedback(`Tilkobling feilet: ${err.message}`, false);
   } finally {

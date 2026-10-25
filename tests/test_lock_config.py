@@ -95,3 +95,43 @@ def test_parse_single_lock_fallback_with_lock_id():
     )
     assert len(configs) == 1
     assert configs[0].lock_id == 3
+
+
+def test_parse_discrete_lock_env_variables():
+    env_mock = {
+        "DOORMAN_LOCK_1_NAME": "Festsalen",
+        "DOORMAN_LOCK_1_ADDRESS": "98:1B:B5:0B:BB:35",
+        "DOORMAN_LOCK_1_KEY": "e5c976e0330b70cb84272f5b1c174789",
+        "DOORMAN_LOCK_1_SLOT": "4",
+        "DOORMAN_LOCK_1_LOCK_ID": "10",
+        "DOORMAN_LOCK_2_NAME": "Peisestua",
+        "DOORMAN_LOCK_2_ADDRESS": "98:1B:B5:0C:DF:4A",
+        "DOORMAN_LOCK_2_KEY": "303dfb2973176af38f4d347f56d807ca",
+        "DOORMAN_LOCK_2_SLOT": "2",
+    }
+    configs = parse_lock_configs(env=env_mock)
+    assert len(configs) == 2
+    assert configs[0].name == "Festsalen"
+    assert configs[0].address == "98:1B:B5:0B:BB:35"
+    assert configs[0].key == "e5c976e0330b70cb84272f5b1c174789"
+    assert configs[0].slot == 4
+    assert configs[0].lock_id == 10
+
+    assert configs[1].name == "Peisestua"
+    assert configs[1].address == "98:1B:B5:0C:DF:4A"
+    assert configs[1].key == "303dfb2973176af38f4d347f56d807ca"
+    assert configs[1].slot == 2
+    assert configs[1].lock_id is None
+
+
+def test_parse_discrete_lock_with_snippen_prefix():
+    env_mock = {
+        "SNIPPEN_LOCK_1_NAME": "Inngang",
+        "SNIPPEN_LOCK_1_ADDRESS": "AA:BB:CC:DD:EE:01",
+        "SNIPPEN_LOCK_1_KEY": "0123456789abcdef0123456789abcdef",
+        "SNIPPEN_LOCK_1_SLOT": "1",
+    }
+    configs = parse_lock_configs(env=env_mock)
+    assert len(configs) == 1
+    assert configs[0].name == "Inngang"
+    assert configs[0].address == "AA:BB:CC:DD:EE:01"
