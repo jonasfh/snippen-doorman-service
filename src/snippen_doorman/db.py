@@ -85,7 +85,44 @@ class Database:
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        if self.db_path != ":memory:":
+            self._apply_pragmas()
+            self._verify_integrity()
         self._init_schema()
+
+    def _apply_pragmas(self) -> None:
+        """Apply performance and crash-resilience pragmas for disk databases."""
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL;")
+            self._conn.execute("PRAGMA synchronous=NORMAL;")
+        except sqlite3.Error as exc:
+            logger.warning("Could not set SQLite PRAGMA journal_mode=WAL: %s", exc)
+
+    def _verify_integrity(self) -> None:
+        """Verify SQLite database integrity on startup, creating backup if corrupt."""
+        try:
+            cur = self._conn.execute("PRAGMA integrity_check;")
+            row = cur.fetchone()
+            if row and row[0] != "ok":
+                logger.error("Database integrity check failed: %s", row[0])
+                self._handle_corrupt_database()
+        except sqlite3.DatabaseError as exc:
+            logger.error("Database error during integrity check: %s", exc)
+            self._handle_corrupt_database()
+
+    def _handle_corrupt_database(self) -> None:
+        """Close corrupt database connection, rename file, and reinitialize."""
+        self._conn.close()
+        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        corrupt_path = f"{self.db_path}.corrupt_{ts}"
+        try:
+            Path(self.db_path).rename(corrupt_path)
+            logger.warning("Corrupt database moved to %s. Creating fresh database.", corrupt_path)
+        except OSError as exc:
+            logger.error("Could not move corrupt database %s: %s", self.db_path, exc)
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._apply_pragmas()
 
     def _init_schema(self) -> None:
         """Create database tables and indexes if they do not exist."""

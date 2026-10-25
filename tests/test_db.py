@@ -141,3 +141,32 @@ def test_delete_pin(db: Database) -> None:
     assert db.delete_pin("b_del") is True
     assert db.get_pin("b_del") is None
     assert db.delete_pin("b_del") is False
+
+
+def test_disk_database_wal_mode(tmp_path) -> None:
+    """Verify that a disk-backed database initializes in WAL mode."""
+    db_file = tmp_path / "test_wal.db"
+    disk_db = Database(db_file)
+    cur = disk_db._conn.execute("PRAGMA journal_mode;")
+    row = cur.fetchone()
+    assert row is not None
+    assert row[0].lower() == "wal"
+    disk_db.close()
+
+
+def test_corrupt_database_recovery(tmp_path) -> None:
+    """Verify that corrupted database files are backed up and recovered."""
+    db_file = tmp_path / "corrupt_test.db"
+    # Write garbage into file to trigger integrity check failure
+    db_file.write_text("THIS IS NOT A VALID SQLITE DATABASE FILE HEADER")
+
+    recovered_db = Database(db_file)
+    # The database should recover and allow creating pins
+    now = datetime.now(UTC)
+    rec = recovered_db.create_pin("recover_b1", "123456", now, now + timedelta(hours=1))
+    assert rec.booking_id == "recover_b1"
+
+    # Verify a .corrupt_ backup file was created
+    corrupt_backups = list(tmp_path.glob("corrupt_test.db.corrupt_*"))
+    assert len(corrupt_backups) == 1
+    recovered_db.close()
