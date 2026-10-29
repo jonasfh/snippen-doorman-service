@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-10-29
+
+### Fixed
+- Fixed JavaScript syntax error in `src/snippen_doorman/web/html.py` caused by an orphaned duplicate code block, restoring interactivity and tab switching across all dashboard views (#59).
+- Enhanced `showTab` navigation handler in `html.py` to robustly activate tabs without relying on global `window.event` (#59).
+- Added dynamic door removal support (`removeLockRow`) in the web dashboard's «🔐 Dørlåser» tab (#59).
+- Added BLE setup status reflection in `loadStatus()` so the «📡 BLE WiFi Oppsett» tab dynamically indicates active peripheral advertising (#59).
+
+### Added
+- Discrete multi-lock persistence in `ConfigManager.update_config()`: updating door configurations through the dashboard now updates and writes `DOORMAN_LOCK_<N>_*` variables and purges stale door tags (#59).
+- Comprehensive dashboard structure and discrete multi-lock configuration tests in `tests/test_web_server.py` (#59).
+
 ## [0.15.1] - 2026-10-29
 
 ### Added
