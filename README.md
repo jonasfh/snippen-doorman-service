@@ -140,7 +140,8 @@ python tools/parse_ha_keys.py --log-file ~/Downloads/home-assistant_*.log --outp
 2. `DoormanSyncEngine`: Change detection and battery-saving sleep logic (#29). Unchanged reservations produce zero BLE communication.
 3. `PinProvisioner` & `SlotAllocator`: Just-In-Time (JIT) slot management (guest slots 9 down to 3) within configurable lead time (`--lead-time`, default 60m).
 4. `YaleLockClient`: Encrypted Bluetooth LE communication programming PIN codes and opportunistically synchronizing lock RTC clocks (`sync_rtc=True`) and capturing battery telemetry (#30).
-5. **Multi-lock & Multi-entrance support**: Manage single or multiple doors simultaneously mapped to entrance IDs in `snippen-booking` (`GET /door/locks` and `GET /door/bookings?lock_id=<id>`). Pass `--lock-id` or configure doors via `--locks` or `SNIPPEN_DOORMAN_LOCKS`.
+5. **Multi-lock & Multi-entrance support**: Manage single or multiple doors simultaneously mapped to entrance IDs in `snippen-booking` (`GET /door/locks` and `GET /door/bookings?lock_id=<id>`). Pass `--lock-id` or configure doors via discrete environment variables (`DOORMAN_LOCK_1_*`, `DOORMAN_LOCK_2_*`) or `SNIPPEN_DOORMAN_LOCKS`.
+   - **Shared Lock ID**: When multiple physical doors provide access to the same rental area (e.g., *Festsalen* and *Peisestua* at Snippen grendehus both sharing `lock_id=1`), `DoormanSyncEngine` automatically deduplicates remote polling requests so the WordPress API is only queried once per cycle, while provisioned PIN codes are programmed into **all** matching physical locks.
 
 ```bash
 # Run service daemon with configured locks and default SQLite storage

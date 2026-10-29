@@ -661,3 +661,74 @@ async def test_multi_door_fault_isolation(sync_env):
     # Lock 2 succeeded!
     assert "book_success_door" in res.provision.activated
     assert "222222" in lock2.pins.values()
+
+
+@pytest.mark.asyncio
+async def test_shared_lock_id_deduplication_and_dual_provisioning(sync_env):
+    """Verify that multiple physical locks sharing the same lock_id deduplicate polling and both receive the PIN (#56)."""
+    now = datetime(2026, 10, 20, 10, 0, tzinfo=UTC)
+
+    # Physical lock 1: Festsalen (lock_id=1)
+    lock1 = FakeLockClient(address="AA:BB:CC:DD:EE:01", local_name="Festsalen")
+    lock1.lock_id = "1"
+
+    # Physical lock 2: Peisestua (also lock_id=1, sharing the same booking resource)
+    lock2 = FakeLockClient(address="AA:BB:CC:DD:EE:02", local_name="Peisestua")
+    lock2.lock_id = "1"
+
+    multi_provisioner = PinProvisioner(
+        db=sync_env["db"],
+        allocator=sync_env["allocator"],
+        lock_clients=[lock1, lock2],
+        lead_time=timedelta(minutes=60),
+        grace_period=timedelta(minutes=15),
+    )
+
+    # Initialize sync engine with duplicate lock_ids ["1", "1"] representing both physical locks
+    multi_engine = DoormanSyncEngine(
+        poller=sync_env["poller"],
+        provisioner=multi_provisioner,
+        store=sync_env["store"],
+        db=sync_env["db"],
+        lock_ids=["1", "1"],
+    )
+
+    # Verify deduplication at engine level
+    assert multi_engine.lock_ids == ["1"]
+
+    poll_calls: list[str | None] = []
+
+    def mock_fetch(lock_id=None):
+        poll_calls.append(str(lock_id) if lock_id is not None else None)
+        return [
+            RemoteBooking(
+                id="book_shared_area",
+                start_time=now + timedelta(minutes=30),
+                end_time=now + timedelta(hours=3),
+                door_code="456789",
+            )
+        ]
+
+    sync_env["booking_client"].fetch_bookings.side_effect = mock_fetch
+
+    res = await multi_engine.sync_once(now=now)
+
+    # 1. Verify deduplication: fetch_bookings was only called ONCE for lock_id "1"
+    assert poll_calls == ["1"]
+    assert "book_shared_area" in res.scheduled
+    assert "book_shared_area" in res.provision.activated
+
+    # 2. Verify dual-lock provisioning: add_pin was invoked on BOTH physical locks
+    assert "456789" in lock1.pins.values()
+    assert "456789" in lock2.pins.values()
+    assert len(lock1.add_pin_calls) == 1
+    assert len(lock2.add_pin_calls) == 1
+
+    # 3. Verify dual-lock deprovisioning when expired
+    later = now + timedelta(hours=4)  # past valid_to (3h) + grace_period (15m)
+    res_expire = await multi_engine.sync_once(now=later)
+    assert "book_shared_area" in res_expire.provision.deprovisioned
+    assert len(lock1.pins) == 0
+    assert len(lock2.pins) == 0
+    assert len(lock1.delete_pin_calls) == 1
+    assert len(lock2.delete_pin_calls) == 1

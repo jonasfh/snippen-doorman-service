@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-10-29
+
+### Added
+- Dedicated unit test in `tests/test_sync.py` verifying that when multiple physical locks share the same `lock_id`, polling is deduplicated and `add_pin` is dispatched to all matching physical locks (#56).
+
+### Changed
+- Deduplicated target lock polling in `DoormanSyncEngine` (`sync.py`) so multiple physical locks sharing the same WordPress resource / lock ID are only queried once per synchronization cycle (#56).
+- Updated `default.env` and `README.md` documenting shared lock ID configuration across multiple physical doors (e.g. Festsalen and Peisestua sharing `lock_id=1`) (#56).
+
 ## [0.15.0] - 2026-10-25
 
 ### Added
