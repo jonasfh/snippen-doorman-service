@@ -39,7 +39,9 @@ apt-get install -y --no-install-recommends \
     python3-pip \
     bluez \
     rfkill \
-    libglib2.0-dev
+    libglib2.0-dev \
+    systemd-timesyncd \
+    fake-hwclock
 
 # 3. Create dedicated service user and groups
 echo "👤 [2/7] Configuring service user '${SERVICE_USER}' and groups..."
@@ -147,8 +149,26 @@ if [ -f "${REPO_ROOT}/systemd/snippen-doorman.service" ]; then
     fi
 fi
 
-# 8. Unblock bluetooth via rfkill if blocked
-echo "📶 [7/7] Checking Bluetooth hardware state..."
+# 8. Configure NTP time synchronization (systemd-timesyncd with Norwegian pool)
+echo "⏰ [7/8] Configuring NTP time synchronization (systemd-timesyncd)..."
+mkdir -p /etc/systemd
+cat << 'EOF' > /etc/systemd/timesyncd.conf
+[Time]
+NTP=0.no.pool.ntp.org 1.no.pool.ntp.org 2.no.pool.ntp.org 3.no.pool.ntp.org
+FallbackNTP=pool.ntp.org time.cloudflare.com
+PollIntervalMinSec=64
+PollIntervalMaxSec=1024
+EOF
+
+if command -v timedatectl >/dev/null 2>&1; then
+    timedatectl set-ntp true 2>/dev/null || true
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable --now systemd-timesyncd 2>/dev/null || true
+fi
+
+# 9. Unblock bluetooth via rfkill if blocked
+echo "📶 [8/8] Checking Bluetooth hardware state..."
 if command -v rfkill >/dev/null 2>&1; then
     rfkill unblock bluetooth || true
 fi

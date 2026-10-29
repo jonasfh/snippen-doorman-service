@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-10-29
+
+### Added
+- Automated NTP time synchronization on Raspberry Pi: `install_pi.sh` now installs `systemd-timesyncd` and `fake-hwclock` and configures Norwegian NTP servers (`no.pool.ntp.org`), preventing clock drift and time reversal on standalone Pi deployments (#64).
+- Systemd dependency on `time-sync.target` and `systemd-timesyncd.service` in `snippen-doorman.service` ensuring access control services and JIT timers only start after the host clock is verified (#64).
+- Daily RTC heartbeat in `DoormanSyncEngine`: periodically connects to configured Yale Doorman locks every 24 hours (`SNIPPEN_DOORMAN_HEARTBEAT_INTERVAL_HOURS=24.0`) to synchronize the internal hardware RTC clock and capture battery telemetry during periods without active bookings (#64).
+- Heartbeat interval configuration in `ConfigManager` and `default.env`, alongside comprehensive unit tests verifying 24-hour cycle triggers, error isolation, and timer resets on PIN activations (#64).
+
 ## [0.16.0] - 2026-10-29
 
 ### Added

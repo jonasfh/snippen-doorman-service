@@ -1,7 +1,7 @@
 [Unit]
 Description=Snippen Doorman Access Control Service
-After=network.target bluetooth.target
-Wants=network.target bluetooth.target
+After=network.target network-online.target time-sync.target bluetooth.target
+Wants=network-online.target systemd-timesyncd.service time-sync.target bluetooth.target
 Documentation=https://github.com/jonasfh/snippen-doorman-service
 
 [Service]

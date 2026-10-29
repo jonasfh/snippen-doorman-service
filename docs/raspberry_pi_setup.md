@@ -29,14 +29,15 @@ sudo bash scripts/install_pi.sh
 ```
 
 ### Hva skriptet utfører automatisk:
-1. Installerer påkrevde systempakker (`python3-venv`, `python3-pip`, `bluez`, `rfkill`, `libglib2.0-dev`).
+1. Installerer påkrevde systempakker (`python3-venv`, `python3-pip`, `bluez`, `rfkill`, `libglib2.0-dev`, `systemd-timesyncd`, `fake-hwclock`).
 2. Oppretter en dedikert, uprivilegert systembruker og gruppe `doorman`.
 3. Tildeler systembrukeren gruppetilhørighet i `bluetooth` og `netdev`.
 4. Oppretter installasjonskatalog `/opt/snippen-doorman-service` med et isolert Python-virtualenv (`.venv`).
 5. Installerer `snippen-doorman-service` i det virtuelle miljøet.
 6. Installerer D-Bus-policyen `/etc/dbus-1/system.d/snippen-doorman.conf` for direkte BlueZ-kommunikasjon uten root-rettigheter.
-7. Installerer og aktiverer systemd-tjenesten `/etc/systemd/system/snippen-doorman.service`.
-8. Oppretter miljøfilen `/etc/snippen-doorman/snippen-doorman.env` med sikre filrettigheter (`0640`, eies av `root:doorman`).
+7. Konfigurerer kontinuerlig NTP-tidssynkronisering (`systemd-timesyncd`) mot norsk tidsserver-pool (`no.pool.ntp.org`).
+8. Installerer og aktiverer systemd-tjenesten `/etc/systemd/system/snippen-doorman.service` (med avhengighet til `time-sync.target`).
+9. Oppretter miljøfilen `/etc/snippen-doorman/snippen-doorman.env` med sikre filrettigheter (`0640`, eies av `root:doorman`).
 
 ---
 
@@ -100,7 +101,30 @@ journalctl -u snippen-doorman -f
 
 ---
 
-## 5. Bluetooth Recovery og feilsøking (#7)
+## 5. Tidssynkronisering og NTP (Systemklokke & Dørlåser)
+
+Raspberry Pi mangler integrert batteridrevet maskinvareklokke (RTC). For at tidsbegrensede PIN-koder skal være nøyaktige og låsenes interne klokke alltid synkron, styres tiden i to ledd:
+
+### 5.1 Systemtid på Raspberry Pi (`systemd-timesyncd`)
+Installasjonsskriptet setter opp `systemd-timesyncd` mot den norske NTP-poolen (`no.pool.ntp.org`) og aktiverer `fake-hwclock` (forhindrer tidsreversering ved reboot uten internett).
+
+```bash
+# Sjekk NTP-synkroniseringsstatus og nøyaktighet
+timedatectl timesync-status
+
+# Sjekk generell klokkestatus (System clock synchronized: yes)
+timedatectl status
+```
+
+Systemd-tjenesten `snippen-doorman.service` har `After=time-sync.target`, som forhindrer at doorman-tjenesten starter før systemklokken er verifisert over NTP.
+
+### 5.2 Låsenes interne klokke (BLE RTC Heartbeat)
+- **Ved ny booking:** Klokken i Yale Doorman stilles automatisk over BLE hver gang en ny PIN-kode programmeres inn.
+- **Daglig Heartbeat:** I perioder uten nye bookinger vil `DoormanSyncEngine` kontakte låsene én gang i døgnet (`SNIPPEN_DOORMAN_HEARTBEAT_INTERVAL_HOURS=24.0`) for å synkronisere låsens interne RTC-klokke og oppdatere batteritelemetri.
+
+---
+
+## 6. Bluetooth Recovery og feilsøking (#7)
 
 Dersom Bluetooth-adapteren opplever heng, interferens, feilmeldingen `No powered Bluetooth adapters found. Turn on Bluetooth and try again.`, eller soft-block på en fersk installasjon:
 

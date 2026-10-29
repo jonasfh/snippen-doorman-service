@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from snippen_doorman.db import Database
 from snippen_doorman.poller import BookingPoller, PollTickResult
@@ -25,6 +25,7 @@ class SyncTickResult:
     scheduled: list[str] = field(default_factory=list)
     updated_schedules: list[str] = field(default_factory=list)
     revoked_schedules: list[str] = field(default_factory=list)
+    heartbeat_locks: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
 
@@ -39,6 +40,7 @@ class DoormanSyncEngine:
         db: Database,
         lock_id: str | int | None = "default",
         lock_ids: list[str | int] | None = None,
+        heartbeat_interval_hours: float = 24.0,
     ) -> None:
         """Initialize synchronization engine.
 
@@ -49,6 +51,7 @@ class DoormanSyncEngine:
             db: Database holding PIN provisioning state.
             lock_id: Identifier for target lock (default: 'default').
             lock_ids: Optional list of lock IDs to poll for multi-door setups.
+            heartbeat_interval_hours: Interval in hours for periodic RTC sync and telemetry (default: 24.0).
         """
         self.poller = poller
         self.provisioner = provisioner
@@ -60,6 +63,8 @@ class DoormanSyncEngine:
             if lock_ids
             else None
         )
+        self.heartbeat_interval_hours = heartbeat_interval_hours
+        self._last_lock_heartbeat: dict[str, datetime] = {}
         self._network_down: bool = False
 
     async def sync_once(self, now: datetime | None = None) -> SyncTickResult:
@@ -203,11 +208,64 @@ class DoormanSyncEngine:
             prov_res = await self.provisioner.tick(now=now)
             result.provision = prov_res
             result.errors.extend(prov_res.errors)
+
+            # If any PINs were activated on lock, their RTC was synchronized; update heartbeat timestamp
+            if prov_res.activated:
+                for b_id in prov_res.activated:
+                    p_rec = self.db.get_pin(b_id)
+                    if p_rec is not None:
+                        act_clients = await self.provisioner._get_lock_clients(
+                            lock_id=p_rec.lock_id
+                        )
+                        for ac in act_clients:
+                            ac_key = getattr(ac, "address", None) or str(id(ac))
+                            self._last_lock_heartbeat[ac_key] = now
         except Exception as exc:
             msg = f"Unexpected failure in provisioning tick: {exc}"
             logger.exception(msg)
             result.errors.append(msg)
             result.provision = ProvisionTickResult(errors=[msg])
+
+        # Step 4: Execute periodic RTC heartbeat and telemetry sync
+        if self.heartbeat_interval_hours > 0:
+            try:
+                heartbeat_delta = timedelta(hours=self.heartbeat_interval_hours)
+                all_clients = await self.provisioner._get_lock_clients()
+                for client in all_clients:
+                    key = getattr(client, "address", None) or str(id(client))
+                    last_hb = self._last_lock_heartbeat.get(key)
+                    if last_hb is None:
+                        # Initialize baseline without disturbing sleeping lock on initial startup tick
+                        self._last_lock_heartbeat[key] = now
+                    elif (now - last_hb) >= heartbeat_delta:
+                        logger.info(
+                            "Executing RTC heartbeat and telemetry sync for lock %s (interval: %.1fh)...",
+                            key,
+                            self.heartbeat_interval_hours,
+                        )
+                        try:
+                            if hasattr(client, "set_rtc"):
+                                await client.set_rtc(now)
+                            if hasattr(client, "get_status"):
+                                try:
+                                    await client.get_status(timeout=15.0)
+                                except Exception as st_exc:  # noqa: BLE001
+                                    logger.debug(
+                                        "Non-fatal status fetch error during heartbeat for %s: %s",
+                                        key,
+                                        st_exc,
+                                    )
+                            self.provisioner._record_telemetry(client)
+                            self._last_lock_heartbeat[key] = now
+                            result.heartbeat_locks.append(key)
+                        except Exception as exc:  # noqa: BLE001
+                            msg = f"Failed to execute RTC heartbeat for lock {key}: {exc}"
+                            logger.error(msg)
+                            result.errors.append(msg)
+            except Exception as exc:  # noqa: BLE001
+                msg = f"Unexpected failure in RTC heartbeat check: {exc}"
+                logger.error(msg)
+                result.errors.append(msg)
 
         return result
 
@@ -238,16 +296,18 @@ class DoormanSyncEngine:
                     or res.provision.activated
                     or res.provision.updated
                     or res.provision.deprovisioned
+                    or res.heartbeat_locks
                     or res.errors
                 ):
                     logger.info(
-                        "Sync cycle: poll[added=%d, updated=%d, removed=%d] provision[activated=%d, updated=%d, deprovisioned=%d] errors=%d",
+                        "Sync cycle: poll[added=%d, updated=%d, removed=%d] provision[activated=%d, updated=%d, deprovisioned=%d] heartbeat=%d errors=%d",
                         len(res.poll.added),
                         len(res.poll.updated),
                         len(res.poll.removed),
                         len(res.provision.activated),
                         len(res.provision.updated),
                         len(res.provision.deprovisioned),
+                        len(res.heartbeat_locks),
                         len(res.errors),
                     )
             except Exception:
