@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from snippen_doorman.config_manager import ConfigManager
@@ -45,6 +47,7 @@ def test_web_server_endpoints(tmp_path) -> None:
         gpio_handler=gpio_handler,
         wifi_manager=MockWifiManager(),
         ble_peripheral=ble_peripheral,
+        auth_enabled=False,
     )
     server.start()
 
@@ -160,7 +163,7 @@ def test_web_dashboard_tabs_html_structure(tmp_path) -> None:
     env_file = tmp_path / "dash_test.env"
     env_file.write_text('SNIPPEN_DOORMAN_BLE_ADDRESS="98:1B:B5:0B:BB:35"\n')
     cfg_mgr = ConfigManager(env_file)
-    server = DoormanWebServer(host="127.0.0.1", port=0, config_manager=cfg_mgr)
+    server = DoormanWebServer(host="127.0.0.1", port=0, config_manager=cfg_mgr, auth_enabled=False)
     server.start()
 
     try:
@@ -215,7 +218,7 @@ def test_web_server_discrete_multi_lock_save_and_cleanup(tmp_path) -> None:
         "DOORMAN_LOCK_2_LOCK_ID=1\n"
     )
     cfg_mgr = ConfigManager(env_file)
-    server = DoormanWebServer(host="127.0.0.1", port=0, config_manager=cfg_mgr)
+    server = DoormanWebServer(host="127.0.0.1", port=0, config_manager=cfg_mgr, auth_enabled=False)
     server.start()
 
     try:
@@ -303,6 +306,103 @@ def test_web_server_discrete_multi_lock_save_and_cleanup(tmp_path) -> None:
         final_cfg = cfg_mgr.load_config()
         assert len(final_cfg.locks) == 1
         assert final_cfg.locks[0].name == "Festsalen Hovedinngang"
+
+    finally:
+        server.stop()
+
+
+def test_web_server_http_basic_auth(tmp_path) -> None:
+    """Verify HTTP Basic Authentication prompts, rejects invalid credentials, and enforces password changes (#58)."""
+    env_file = tmp_path / "auth_test.env"
+    env_file.write_text(
+        'SNIPPEN_DOORMAN_ADMIN_PASSWORD="superSecretPassword"\n'
+        'SNIPPEN_DOORMAN_BLE_ADDRESS="98:1B:B5:0B:BB:35"\n'
+    )
+    cfg_mgr = ConfigManager(env_file)
+    # Default auth_enabled=True
+    server = DoormanWebServer(host="127.0.0.1", port=0, config_manager=cfg_mgr)
+    server.start()
+
+    def make_auth_header(username: str, password: str) -> dict[str, str]:
+        creds = base64.b64encode(f"{username}:{password}".encode()).decode("utf-8")
+        return {"Authorization": f"Basic {creds}"}
+
+    try:
+        base_url = f"http://127.0.0.1:{server._server.server_port}"
+
+        # 1. Unauthenticated request to / must return 401 with WWW-Authenticate header
+        try:
+            urlopen(f"{base_url}/")
+            raise AssertionError("Should have raised HTTPError 401")
+        except HTTPError as err:
+            assert err.code == 401
+            assert 'Basic realm="Snippen Doorman Admin"' in err.headers.get("WWW-Authenticate", "")
+            data = json.loads(err.read().decode("utf-8"))
+            assert data["error"] == "Unauthorized"
+
+        # 2. Unauthenticated request to /api/status must also return 401
+        try:
+            urlopen(f"{base_url}/api/status")
+            raise AssertionError("Should have raised HTTPError 401")
+        except HTTPError as err:
+            assert err.code == 401
+
+        # 3. Wrong password must return 401
+        bad_req = Request(f"{base_url}/api/status", headers=make_auth_header("admin", "wrongPass"))
+        try:
+            urlopen(bad_req)
+            raise AssertionError("Should have raised HTTPError 401")
+        except HTTPError as err:
+            assert err.code == 401
+
+        # 4. Correct credentials must succeed (200)
+        good_req = Request(
+            f"{base_url}/api/status",
+            headers=make_auth_header("admin", "superSecretPassword"),
+        )
+        with urlopen(good_req) as res:
+            assert res.status == 200
+            status_data = json.loads(res.read().decode("utf-8"))
+            assert "hostname" in status_data
+
+        # 5. OPTIONS preflight request must return 204 without auth
+        opts_req = Request(f"{base_url}/api/status", method="OPTIONS")
+        with urlopen(opts_req) as res:
+            assert res.status == 204
+
+        # 6. Change admin password via POST /api/config
+        update_payload = json.dumps({"admin_password": "newSecurePassword2026"}).encode("utf-8")
+        post_req = Request(
+            f"{base_url}/api/config",
+            data=update_payload,
+            headers={
+                **make_auth_header("admin", "superSecretPassword"),
+                "Content-Type": "application/json",
+            },
+        )
+        with urlopen(post_req) as res:
+            assert res.status == 200
+
+        # 7. Old password must now be rejected with 401
+        old_req = Request(
+            f"{base_url}/api/config",
+            headers=make_auth_header("admin", "superSecretPassword"),
+        )
+        try:
+            urlopen(old_req)
+            raise AssertionError("Should have raised HTTPError 401 with old password")
+        except HTTPError as err:
+            assert err.code == 401
+
+        # 8. New password must succeed with 200
+        new_req = Request(
+            f"{base_url}/api/config",
+            headers=make_auth_header("admin", "newSecurePassword2026"),
+        )
+        with urlopen(new_req) as res:
+            assert res.status == 200
+            cfg_data = json.loads(res.read().decode("utf-8"))
+            assert cfg_data["admin_password_configured"] is True
 
     finally:
         server.stop()

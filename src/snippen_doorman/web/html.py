@@ -213,6 +213,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <input type="password" id="cfg-api-token" name="api_token" placeholder="Hemmelig API-token">
             <div class="help-text">Autentiseringstoken generert i Snippen Booking-plugin.</div>
           </div>
+          <div class="form-group">
+            <label for="cfg-admin-password">Admin-passord (Web Dashboard)</label>
+            <input type="password" id="cfg-admin-password" name="admin_password" placeholder="••••••••">
+            <div class="help-text">Passord for HTTP Basic Auth innlogging. Minimum 6 tegn. La stå tomt for å beholde eksisterende.</div>
+          </div>
           <div class="grid-2">
             <div class="form-group">
               <label for="cfg-lead-time">Lead Time (minutter før start)</label>
@@ -368,6 +373,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         // Populate API tab
         document.getElementById('cfg-api-url').value = currentConfig.api_url || '';
         document.getElementById('cfg-api-token').value = currentConfig.api_token_masked || '';
+        if (document.getElementById('cfg-admin-password')) {
+          document.getElementById('cfg-admin-password').value = currentConfig.admin_password_configured ? '••••••••' : '';
+        }
         document.getElementById('cfg-lead-time').value = currentConfig.lead_time_minutes || 60;
         document.getElementById('cfg-grace-period').value = currentConfig.grace_period_minutes || 15;
         document.getElementById('gpio-pin-label').textContent = `GPIO ${currentConfig.gpio_button_pin || 26} (Aktiv)`;
@@ -586,6 +594,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         lead_time_minutes: parseInt(document.getElementById('cfg-lead-time').value, 10),
         grace_period_minutes: parseInt(document.getElementById('cfg-grace-period').value, 10)
       };
+      const pwd = document.getElementById('cfg-admin-password')?.value.trim();
+      if (pwd && !pwd.includes('••••')) {
+        body.admin_password = pwd;
+      }
       try {
         const res = await fetch('/api/config', {
           method: 'POST',
@@ -594,7 +606,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         });
         const data = await res.json();
         if (data.success) {
-          showToast('API-innstillinger lagret!', 'success');
+          showToast('API- og sikkerhetsinnstillinger lagret!', 'success');
+          loadConfig();
         } else {
           showToast('Feil: ' + (data.errors || []).join(', '), 'error');
         }

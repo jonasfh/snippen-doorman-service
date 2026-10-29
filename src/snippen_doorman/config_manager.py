@@ -187,6 +187,7 @@ class ConfigManager:
             "guest_slot_min": cfg.guest_slot_min,
             "guest_slot_max": cfg.guest_slot_max,
             "gpio_button_pin": cfg.gpio_button_pin,
+            "admin_password_configured": bool(cfg.admin_password),
             "env_file_path": cfg.env_file_path,
             "locks": [
                 {
