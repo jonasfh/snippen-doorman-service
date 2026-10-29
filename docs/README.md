@@ -5,6 +5,7 @@ This directory contains comprehensive documentation for the Snippen Doorman Serv
 ## Contents
 
 - **[architecture.md](architecture.md)** — System architecture, design principles, and data flows
+- **[multi_node_architecture.md](multi_node_architecture.md)** — Arkitektur for uavhengige utleieenheter, flernode-oppsett og ESP32 BLE-bridge (Konsept 2)
 - **[production_roadmap.md](production_roadmap.md)** — Produksjons-roadmap og implementeringsplan for Raspberry Pi-utrulling
 - **[yale_ble_protocol.md](yale_ble_protocol.md)** — Yale Doorman BLE protocol findings, discovery, and authentication
 - **[yale_ble_pin_protocol.md](yale_ble_pin_protocol.md)** — Protokollspesifikasjon for PIN- og adgangskodeadministrasjon over BLE (kartlagt via APK-analyse)

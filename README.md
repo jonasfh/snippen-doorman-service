@@ -200,3 +200,10 @@ Access the dashboard at `http://snippen-doorman-service.local:8080` (or `http://
 - Provision WiFi over Bluetooth Low Energy via the companion PWA at `http://<pi-ip>:8080/web-config` (unauthenticated for direct mobile onboarding).
 - Protect dashboard operations with HTTP Basic Authentication by configuring `SNIPPEN_DOORMAN_ADMIN_PASSWORD` (default user `admin`).
 - Activate BLE setup mode on Raspberry Pi via physical GPIO button (GPIO 26) or UI button.
+
+### Multi-Node Deployments & Independent Rental Units
+
+For estates with independent rental units (e.g. Grendehuset vs. Hybel) operating beyond mutual BLE radio coverage, multiple independent Doorman nodes can run in parallel:
+- Each node scopes synchronization using its designated `SNIPPEN_DOORMAN_LOCK_ID`.
+- PIN codes are fully isolated between rental units with zero cross-leakage.
+- See [docs/multi_node_architecture.md](docs/multi_node_architecture.md) for full architectural blueprints, ESP32 micro-bridge options, and central fleet monitoring.

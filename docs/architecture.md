@@ -91,3 +91,11 @@ Access codes can be generated days or weeks in advance for tenants, but are only
 - Revoke codes
 - Query access events
 - Monitor lock status
+
+## Multi-Node & Independent Rental Units
+
+For estates with multiple independent rental units (e.g. Grendehuset vs. Hybel / utleieleilighet) located outside mutual BLE radio range:
+- Multiple physical nodes (Raspberry Pi or ESP32 BLE gateways) connect to the central WordPress Booking API.
+- Each node filters bookings using `GET /wp-json/snippen/v1/door/bookings?lock_id=<id>`, ensuring strict credential isolation between rental units.
+- Within a single unit, multiple physical locks can share the same `lock_id` (e.g. Festsalen + Peisestua).
+- Detailed multi-node topology, hardware trade-offs, and ESP32 gateway blueprints are documented in [docs/multi_node_architecture.md](multi_node_architecture.md).

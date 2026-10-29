@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-10-29
+
+### Added
+- Architectural specification and design blueprint for multi-node deployments and independent rental units (`docs/multi_node_architecture.md`) solving physical BLE range limits and guaranteeing strict credential isolation across separate venues (#57).
+- Embedded microcontroller (ESP32 BLE Bridge) gateway blueprints and firmware structure (`firmware/esp32/README.md`) for low-power, instant-boot standalone nodes (#57).
+- Scoped multi-node polling integration with WordPress Booking API (`GET /wp-json/snippen/v1/door/bookings?lock_id=<id>`) and central fleet status monitoring specifications (#57).
+- Updated system architecture overview and top-level documentation referencing multi-node deployment strategies (#57).
+
 ## [0.15.3] - 2026-10-29
 
 ### Added
