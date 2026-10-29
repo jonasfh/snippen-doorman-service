@@ -38,6 +38,7 @@ class DoormanConfig:
     lead_time_minutes: int = 60
     grace_period_minutes: int = 15
     sync_interval_seconds: float = 60.0
+    heartbeat_interval_hours: float = 24.0
     guest_slot_min: int = 3
     guest_slot_max: int = 9
     gpio_button_pin: int = 26
@@ -96,6 +97,11 @@ class ConfigManager:
             sync_interval = float(get_val("SNIPPEN_DOORMAN_SYNC_INTERVAL", "60.0"))
         except ValueError:
             sync_interval = 60.0
+
+        try:
+            heartbeat_hours = float(get_val("SNIPPEN_DOORMAN_HEARTBEAT_INTERVAL_HOURS", "24.0"))
+        except ValueError:
+            heartbeat_hours = 24.0
 
         try:
             slot_min = int(get_val("SNIPPEN_GUEST_SLOT_MIN", "3"))
@@ -168,6 +174,7 @@ class ConfigManager:
             lead_time_minutes=lead_time,
             grace_period_minutes=grace_period,
             sync_interval_seconds=sync_interval,
+            heartbeat_interval_hours=heartbeat_hours,
             guest_slot_min=slot_min,
             guest_slot_max=slot_max,
             gpio_button_pin=gpio_pin,
@@ -184,6 +191,7 @@ class ConfigManager:
             "lead_time_minutes": cfg.lead_time_minutes,
             "grace_period_minutes": cfg.grace_period_minutes,
             "sync_interval_seconds": cfg.sync_interval_seconds,
+            "heartbeat_interval_hours": cfg.heartbeat_interval_hours,
             "guest_slot_min": cfg.guest_slot_min,
             "guest_slot_max": cfg.guest_slot_max,
             "gpio_button_pin": cfg.gpio_button_pin,
@@ -266,6 +274,15 @@ class ConfigManager:
                 new_env_entries["SNIPPEN_DOORMAN_SYNC_INTERVAL"] = str(si)
             except (ValueError, TypeError):
                 errors.append("Synkroniseringsintervall må være minst 1.0 sekund.")
+
+        if "heartbeat_interval_hours" in updates:
+            try:
+                hb = float(updates["heartbeat_interval_hours"])
+                if hb < 0:
+                    raise ValueError
+                new_env_entries["SNIPPEN_DOORMAN_HEARTBEAT_INTERVAL_HOURS"] = str(hb)
+            except (ValueError, TypeError):
+                errors.append("Heartbeat-intervall må være 0 eller et positivt tall.")
 
         if "gpio_button_pin" in updates:
             try:

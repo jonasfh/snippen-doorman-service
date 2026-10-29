@@ -362,6 +362,13 @@ async def run_service_command(
         sync_rtc=True,
     )
 
+    try:
+        heartbeat_interval_hours = float(
+            os.environ.get("SNIPPEN_DOORMAN_HEARTBEAT_INTERVAL_HOURS", "24.0")
+        )
+    except ValueError:
+        heartbeat_interval_hours = 24.0
+
     client = SnippenBookingClient(
         api_url=api_url, api_token=api_token, timeout_seconds=timeout_seconds
     )
@@ -373,6 +380,7 @@ async def run_service_command(
         store=store,
         db=db,
         lock_ids=lock_ids if lock_ids else None,
+        heartbeat_interval_hours=heartbeat_interval_hours,
     )
 
     try:
@@ -406,6 +414,9 @@ async def run_service_command(
             )
             print(
                 f"Deprovisioned: {len(result.provision.deprovisioned)} ({', '.join(result.provision.deprovisioned) if result.provision.deprovisioned else 'none'})"
+            )
+            print(
+                f"Heartbeat:     {len(result.heartbeat_locks)} ({', '.join(result.heartbeat_locks) if result.heartbeat_locks else 'none'})"
             )
             print(f"Scheduled:     {len(result.scheduled)}")
 

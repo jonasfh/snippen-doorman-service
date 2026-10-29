@@ -100,6 +100,8 @@ snippen-doorman rtc sync
 snippen-doorman rtc sync --time "2026-10-09T14:30:00"
 ```
 
+In addition to manual synchronization, `snippen-doorman-service` automatically synchronizes the lock's RTC clock during PIN code provisioning, and `DoormanSyncEngine` executes a daily RTC heartbeat (`SNIPPEN_DOORMAN_HEARTBEAT_INTERVAL_HOURS=24.0`) to keep the lock clock accurate and capture fresh battery telemetry even when no bookings have started. The host Raspberry Pi clock is kept synchronized continuously via `systemd-timesyncd` (`no.pool.ntp.org`).
+
 ### Slot Allocation & JIT PIN Provisioning
 
 To avoid conflicts with administrative credentials in the official Yale Home app (which populates slots 0 to 2), `snippen-doorman-service` shields slots 0–2 and allocates guest slots strictly in descending order (slots 9 down to 3). Temporary codes are scheduled in SQLite and provisioned Just-In-Time (JIT) over BLE prior to booking start:

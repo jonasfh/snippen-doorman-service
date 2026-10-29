@@ -31,8 +31,10 @@ class FakeLockClient:
         self.pins: dict[int, str] = {}
         self.add_pin_calls: list[dict] = []
         self.delete_pin_calls: list[dict] = []
+        self.set_rtc_calls: list[datetime | int | None] = []
         self.fail_add_pin = False
         self.fail_delete_pin = False
+        self.fail_set_rtc = False
         self.battery = 88
         self.lock_status = "LOCKED"
         self.door_status = "CLOSED"
@@ -74,6 +76,12 @@ class FakeLockClient:
         self.delete_pin_calls.append({"slot": slot, "pin": pin})
         self.pins.pop(slot, None)
         return True
+
+    async def set_rtc(self, timestamp: datetime | int | None = None) -> int:
+        if self.fail_set_rtc:
+            raise TimeoutError(f"BLE connection timeout to {self.address}")
+        self.set_rtc_calls.append(timestamp)
+        return int(timestamp.timestamp()) if isinstance(timestamp, datetime) else 1234567890
 
     async def disconnect(self) -> None:
         pass
@@ -732,3 +740,99 @@ async def test_shared_lock_id_deduplication_and_dual_provisioning(sync_env):
     assert len(lock2.pins) == 0
     assert len(lock1.delete_pin_calls) == 1
     assert len(lock2.delete_pin_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_rtc_heartbeat_daily_trigger(sync_env):
+    """Test periodic RTC heartbeat triggers every 24 hours to sync clock and record telemetry (#64)."""
+    now = datetime(2026, 11, 1, 10, 0, tzinfo=UTC)
+    fake_client = sync_env["lock"]
+    sync_env["booking_client"].fetch_bookings.return_value = []
+    engine = sync_env["engine"]
+    engine.heartbeat_interval_hours = 24.0
+
+    # 1. First sync_once initializes baseline without waking sleeping lock
+    res1 = await engine.sync_once(now=now)
+    assert res1.heartbeat_locks == []
+    assert len(fake_client.set_rtc_calls) == 0
+
+    # 2. Sync at 12 hours later: within interval, heartbeat should NOT fire
+    res2 = await engine.sync_once(now=now + timedelta(hours=12))
+    assert res2.heartbeat_locks == []
+    assert len(fake_client.set_rtc_calls) == 0
+
+    # 3. Sync at 25 hours later: interval elapsed, heartbeat fires
+    t_25h = now + timedelta(hours=25)
+    res3 = await engine.sync_once(now=t_25h)
+    assert fake_client.address in res3.heartbeat_locks
+    assert len(fake_client.set_rtc_calls) == 1
+    assert fake_client.set_rtc_calls[0] == t_25h
+    status_rec = sync_env["db"].get_lock_status(fake_client.address)
+    assert status_rec is not None
+    assert status_rec.battery == 88
+
+    # 4. Sync at 50 hours later (25 hours after last heartbeat): fires again
+    t_50h = now + timedelta(hours=50)
+    res4 = await engine.sync_once(now=t_50h)
+    assert fake_client.address in res4.heartbeat_locks
+    assert len(fake_client.set_rtc_calls) == 2
+    assert fake_client.set_rtc_calls[1] == t_50h
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_rtc_heartbeat_reset_on_pin_activation(sync_env):
+    """Test that PIN provisioning on lock resets the heartbeat timer (#64)."""
+    now = datetime(2026, 11, 1, 8, 0, tzinfo=UTC)
+    fake_client = sync_env["lock"]
+    engine = sync_env["engine"]
+    engine.heartbeat_interval_hours = 24.0
+
+    # Initial tick at 08:00 (baseline recorded)
+    sync_env["booking_client"].fetch_bookings.return_value = []
+    await engine.sync_once(now=now)
+    assert len(fake_client.set_rtc_calls) == 0
+
+    # At 20:00 (12 hours later), a booking is activated (which syncs RTC via add_pin)
+    t_booking = now + timedelta(hours=12)
+    sync_env["booking_client"].fetch_bookings.return_value = [
+        RemoteBooking(
+            id="hb_b1",
+            start_time=t_booking + timedelta(minutes=30),
+            end_time=t_booking + timedelta(hours=2),
+            door_code="123456",
+        )
+    ]
+    res_b = await engine.sync_once(now=t_booking)
+    assert "hb_b1" in res_b.provision.activated
+
+    # At now + 25 hours (which is 13 hours after the booking activation):
+    # Heartbeat should NOT fire because the lock was updated at now + 12 hours
+    res_mid = await engine.sync_once(now=now + timedelta(hours=25))
+    assert res_mid.heartbeat_locks == []
+    assert len(fake_client.set_rtc_calls) == 0
+
+    # At now + 37 hours (25 hours after the booking activation):
+    # Heartbeat triggers
+    res_due = await engine.sync_once(now=now + timedelta(hours=37))
+    assert fake_client.address in res_due.heartbeat_locks
+    assert len(fake_client.set_rtc_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_rtc_heartbeat_error_handling(sync_env):
+    """Test that a failure in RTC heartbeat on a lock is caught and recorded without crashing (#64)."""
+    now = datetime(2026, 11, 1, 10, 0, tzinfo=UTC)
+    fake_client = sync_env["lock"]
+    fake_client.fail_set_rtc = True
+    sync_env["booking_client"].fetch_bookings.return_value = []
+    engine = sync_env["engine"]
+    engine.heartbeat_interval_hours = 24.0
+
+    # Tick 1: sets baseline
+    await engine.sync_once(now=now)
+
+    # Tick 2: 25h later, attempts heartbeat, fails, records error
+    res = await engine.sync_once(now=now + timedelta(hours=25))
+    assert len(res.errors) >= 1
+    assert any("RTC heartbeat" in err for err in res.errors)
+    assert fake_client.address not in res.heartbeat_locks
