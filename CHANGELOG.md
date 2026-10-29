@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] - 2026-10-29
+
+### Added
+- HTTP Basic Authentication protection for the administrative Web Dashboard (`/` and `/api/*`) with constant-time password verification via `hmac.compare_digest` (#58).
+- Admin password configuration support in `ConfigManager`, `.env`, and the web dashboard's «API & Innstillinger» tab (#58).
+- Unauthenticated access carve-out for standalone `/web-config/*` PWA tools to preserve direct mobile Bluetooth Wi-Fi onboarding without credential friction (#58).
+- Comprehensive unit tests covering authentication challenges, valid/invalid credentials, password updates via API, and unauthenticated static asset access (#58).
+
 ## [0.15.2] - 2026-10-29
 
 ### Fixed

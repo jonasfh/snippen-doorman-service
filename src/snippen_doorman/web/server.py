@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hmac
 import json
 import logging
 import mimetypes
@@ -53,6 +56,7 @@ class DoormanWebServer:
         wifi_manager: WifiManager | None = None,
         ble_peripheral: BleWifiPeripheral | None = None,
         event_loop: asyncio.AbstractEventLoop | None = None,
+        auth_enabled: bool = True,
     ) -> None:
         """Initialize web server.
 
@@ -66,6 +70,7 @@ class DoormanWebServer:
             wifi_manager: NetworkManager WiFi manager instance.
             ble_peripheral: BLE WiFi peripheral setup controller.
             event_loop: Asyncio event loop used for executing BLE operations.
+            auth_enabled: Whether HTTP Basic Authentication is enforced (default: True).
         """
         self.host = host
         self.port = port
@@ -76,6 +81,7 @@ class DoormanWebServer:
         self.wifi_manager = wifi_manager or WifiManager()
         self.ble_peripheral = ble_peripheral
         self.event_loop = event_loop
+        self.auth_enabled = auth_enabled
         self.start_time = datetime.now(UTC)
 
         self._lock_status_cache: dict[str, dict[str, Any]] = {}
@@ -127,11 +133,50 @@ class DoormanWebServer:
                 self.end_headers()
                 self.wfile.write(body)
 
-            def do_GET(self) -> None:
-                if self.path in ("/", "/index.html"):
-                    self._send_html(200, DASHBOARD_HTML)
-                    return
+            def _is_authenticated(self) -> bool:
+                if not parent.auth_enabled:
+                    return True
+                cfg = parent.config_manager.load_config()
+                expected_password = cfg.admin_password
+                if not expected_password:
+                    return True
 
+                auth_header = self.headers.get("Authorization", "")
+                if not auth_header.startswith("Basic "):
+                    return False
+
+                encoded = auth_header[6:].strip()
+                try:
+                    decoded = base64.b64decode(encoded).decode("utf-8", errors="ignore")
+                except (ValueError, binascii.Error):
+                    return False
+
+                if ":" not in decoded:
+                    return False
+
+                _username, password = decoded.split(":", 1)
+                return hmac.compare_digest(password, expected_password)
+
+            def _send_auth_required(self) -> None:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="Snippen Doorman Admin"')
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                body = json.dumps(
+                    {"error": "Unauthorized", "message": "Admin-passord påkrevd"}
+                ).encode("utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_OPTIONS(self) -> None:
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+                self.end_headers()
+
+            def do_GET(self) -> None:
                 if self.path == "/web-config" or self.path == "/web-config/":
                     self.path = "/web-config/index.html"
 
@@ -171,6 +216,14 @@ class DoormanWebServer:
                     else:
                         self._send_json(404, {"error": "File not found"})
                         return
+
+                if not self._is_authenticated():
+                    self._send_auth_required()
+                    return
+
+                if self.path in ("/", "/index.html"):
+                    self._send_html(200, DASHBOARD_HTML)
+                    return
 
                 if self.path == "/api/status":
                     cfg = parent.config_manager.load_config()
@@ -285,6 +338,10 @@ class DoormanWebServer:
                 self._send_json(404, {"error": "Not found"})
 
             def do_POST(self) -> None:
+                if not self._is_authenticated():
+                    self._send_auth_required()
+                    return
+
                 length = int(self.headers.get("Content-Length", 0))
                 raw_body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
                 try:

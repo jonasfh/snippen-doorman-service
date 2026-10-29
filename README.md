@@ -197,5 +197,6 @@ Access the dashboard at `http://snippen-doorman-service.local:8080` (or `http://
 - Monitor live gateway telemetry, battery health, and door/lock states.
 - Test unlock and inspect live synchronization logs.
 - Configure Yale Doorman locks, offline keys, and WordPress Booking API credentials.
-- Provision WiFi over Bluetooth Low Energy via the companion PWA at `http://<pi-ip>:8080/web-config`.
+- Provision WiFi over Bluetooth Low Energy via the companion PWA at `http://<pi-ip>:8080/web-config` (unauthenticated for direct mobile onboarding).
+- Protect dashboard operations with HTTP Basic Authentication by configuring `SNIPPEN_DOORMAN_ADMIN_PASSWORD` (default user `admin`).
 - Activate BLE setup mode on Raspberry Pi via physical GPIO button (GPIO 26) or UI button.
