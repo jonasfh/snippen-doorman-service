@@ -323,14 +323,25 @@ class ConfigManager:
                     )
 
             if not errors and valid_locks:
-                if len(valid_locks) == 1:
-                    new_env_entries["SNIPPEN_DOORMAN_BLE_ADDRESS"] = valid_locks[0].address
-                    new_env_entries["SNIPPEN_DOORMAN_BLE_KEY"] = valid_locks[0].key
-                    new_env_entries["SNIPPEN_DOORMAN_BLE_SLOT"] = str(valid_locks[0].slot)
-                    new_env_entries["SNIPPEN_DOORMAN_LOCK_ID"] = (
-                        str(valid_locks[0].lock_id) if valid_locks[0].lock_id is not None else ""
+                # Primary fallback variables for single-lock setups
+                new_env_entries["SNIPPEN_DOORMAN_BLE_ADDRESS"] = valid_locks[0].address
+                new_env_entries["SNIPPEN_DOORMAN_BLE_KEY"] = valid_locks[0].key
+                new_env_entries["SNIPPEN_DOORMAN_BLE_SLOT"] = str(valid_locks[0].slot)
+                new_env_entries["SNIPPEN_DOORMAN_LOCK_ID"] = (
+                    str(valid_locks[0].lock_id) if valid_locks[0].lock_id is not None else ""
+                )
+
+                # Persist discrete per-lock variables (DOORMAN_LOCK_<N>_*)
+                for idx, lk in enumerate(valid_locks, start=1):
+                    new_env_entries[f"DOORMAN_LOCK_{idx}_NAME"] = lk.name
+                    new_env_entries[f"DOORMAN_LOCK_{idx}_ADDRESS"] = lk.address
+                    new_env_entries[f"DOORMAN_LOCK_{idx}_KEY"] = lk.key
+                    new_env_entries[f"DOORMAN_LOCK_{idx}_SLOT"] = str(lk.slot)
+                    new_env_entries[f"DOORMAN_LOCK_{idx}_LOCK_ID"] = (
+                        str(lk.lock_id) if lk.lock_id is not None else ""
                     )
-                    # Clear multi-locks if only 1
+
+                if len(valid_locks) == 1:
                     new_env_entries["SNIPPEN_DOORMAN_LOCKS"] = ""
                 else:
                     multi_str = ",".join(
@@ -338,22 +349,34 @@ class ConfigManager:
                         for lk in valid_locks
                     )
                     new_env_entries["SNIPPEN_DOORMAN_LOCKS"] = multi_str
-                    new_env_entries["SNIPPEN_DOORMAN_BLE_ADDRESS"] = valid_locks[0].address
-                    new_env_entries["SNIPPEN_DOORMAN_BLE_KEY"] = valid_locks[0].key
-                    new_env_entries["SNIPPEN_DOORMAN_BLE_SLOT"] = str(valid_locks[0].slot)
-                    new_env_entries["SNIPPEN_DOORMAN_LOCK_ID"] = (
-                        str(valid_locks[0].lock_id) if valid_locks[0].lock_id is not None else ""
-                    )
 
         if errors:
             return False, errors
 
-        # Persist to env file
-        self._write_env_file(new_env_entries)
+        # Detect stale discrete variables to remove if number of locks decreased
+        remove_keys: set[str] = set()
+        if "locks" in updates and isinstance(updates["locks"], list) and not errors and valid_locks:
+            existing_env = self._read_env_file()
+            pattern = re.compile(
+                r"^(?:SNIPPEN_)?(?:DOORMAN_)?LOCK_([A-Za-z0-9_]+)_(ADDRESS|KEY|SLOT|LOCK_ID|NAME)$",
+                re.IGNORECASE,
+            )
+            for k in existing_env:
+                m = pattern.match(k.strip())
+                if m:
+                    tag = m.group(1)
+                    if tag.isdigit() and int(tag) > len(valid_locks):
+                        remove_keys.add(k)
 
-        # Update running os.environ
+        # Persist to env file
+        self._write_env_file(new_env_entries, remove_keys=remove_keys)
+
+        # Update running os.environ (excluding discrete DOORMAN_LOCK_* to avoid polluting global process state)
         for k, v in new_env_entries.items():
-            os.environ[k] = v
+            if not k.startswith(("DOORMAN_LOCK_", "SNIPPEN_DOORMAN_LOCK_")):
+                os.environ[k] = v
+        for rk in remove_keys:
+            os.environ.pop(rk, None)
 
         return True, []
 
@@ -374,7 +397,7 @@ class ConfigManager:
             logger.warning("Could not read env file %s: %s", self.env_path, exc)
         return res
 
-    def _write_env_file(self, updates: dict[str, str]) -> None:
+    def _write_env_file(self, updates: dict[str, str], remove_keys: set[str] | None = None) -> None:
         """Update env file in-place, preserving existing lines and comments."""
         lines: list[str] = []
         handled_keys: set[str] = set()
@@ -387,6 +410,8 @@ class ConfigManager:
                         if stripped and not stripped.startswith("#") and "=" in stripped:
                             k, _ = stripped.split("=", 1)
                             k = k.strip()
+                            if remove_keys and k in remove_keys:
+                                continue
                             if k in updates:
                                 val = updates[k]
                                 lines.append(f'{k}="{val}"\n')

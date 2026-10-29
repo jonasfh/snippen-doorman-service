@@ -113,10 +113,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </header>
 
     <nav>
-      <button class="nav-btn active" onclick="showTab('status')">📊 Oversikt & Test</button>
-      <button class="nav-btn" onclick="showTab('locks')">🔐 Dørlåser</button>
-      <button class="nav-btn" onclick="showTab('api')">🌐 Booking API</button>
-      <button class="nav-btn" onclick="showTab('ble')">📡 BLE WiFi Oppsett</button>
+      <button class="nav-btn active" onclick="showTab('status', this)">📊 Oversikt & Test</button>
+      <button class="nav-btn" onclick="showTab('locks', this)">🔐 Dørlåser</button>
+      <button class="nav-btn" onclick="showTab('api', this)">🌐 Booking API</button>
+      <button class="nav-btn" onclick="showTab('ble', this)">📡 BLE WiFi Oppsett</button>
     </nav>
 
     <!-- TAB 1: OVERSIKT & TEST -->
@@ -262,11 +262,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <script>
     let currentConfig = null;
 
-    function showTab(name) {
+    function showTab(name, btn) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
-      document.getElementById('tab-' + name).classList.add('active');
-      event.target.classList.add('active');
+      const targetTab = document.getElementById('tab-' + name);
+      if (targetTab) targetTab.classList.add('active');
+      if (btn) {
+        btn.classList.add('active');
+      } else {
+        const found = Array.from(document.querySelectorAll('.nav-btn')).find(b => b.getAttribute('onclick')?.includes(`'${name}'`));
+        if (found) found.classList.add('active');
+      }
       if (name === 'locks' || name === 'api') loadConfig();
     }
 
@@ -334,6 +340,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           allLocksCard.style.display = 'none';
         }
 
+        const bleStatusEl = document.getElementById('ble-setup-status');
+        if (bleStatusEl) {
+          if (data.ble_setup_active) {
+            const mins = Math.ceil((data.ble_setup_remaining_seconds || 600) / 60);
+            bleStatusEl.innerHTML = `<span class="badge badge-green">Aktiv (${mins} min gjenstår)</span>`;
+          } else {
+            bleStatusEl.innerHTML = '<span class="badge badge-yellow">Venter på aktivering</span>';
+          }
+        }
+
         if (data.events && data.events.length) {
           const terminal = document.getElementById('log-terminal');
           terminal.innerHTML = data.events.map(e => `<div class="log-line"><span class="log-time">[${e.time}]</span> ${e.msg}</div>`).join('');
@@ -369,8 +385,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         locks = [{ name: 'Hoveddør', address: '', key_masked: '', slot: 1, lock_id: null }];
       }
       container.innerHTML = locks.map((lk, i) => `
-        <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
-          <div style="font-weight: 700; margin-bottom: 0.75rem;">Dør #${i + 1}</div>
+        <div class="lock-card" style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <div style="font-weight: 700;">Dør #${i + 1}</div>
+            ${locks.length > 1 ? `<button type="button" class="btn btn-danger btn-sm" onclick="removeLockRow(this)">Fjern dør</button>` : ''}
+          </div>
           <div class="grid-2">
             <div class="form-group">
               <label>Dørnavn</label>
@@ -399,40 +418,75 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       `).join('');
     }
 
+    function removeLockRow(btn) {
+      const card = btn.closest('.lock-card');
+      if (card) {
+        card.remove();
+        const container = document.getElementById('locks-container');
+        const remaining = container.querySelectorAll('.lock-card');
+        remaining.forEach((el, idx) => {
+          const title = el.querySelector('div > div:first-child');
+          if (title) title.textContent = `Dør #${idx + 1}`;
+          if (remaining.length === 1) {
+            const delBtn = el.querySelector('.btn-danger');
+            if (delBtn) delBtn.remove();
+          }
+        });
+      }
+    }
+
     function addLockRow() {
       const container = document.getElementById('locks-container');
-      const count = container.children.length + 1;
+      const count = container.querySelectorAll('.lock-card').length + 1;
       const div = document.createElement('div');
+      div.className = 'lock-card';
+      div.style = 'background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;';
       div.innerHTML = `
-        <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
-          <div style="font-weight: 700; margin-bottom: 0.75rem;">Dør #${count}</div>
-          <div class="grid-2">
-            <div class="form-group">
-              <label>Dørnavn</label>
-              <input type="text" class="lock-name" value="Dør ${count}" placeholder="Dørnavn">
-            </div>
-            <div class="form-group">
-              <label>Bluetooth MAC-adresse</label>
-              <input type="text" class="lock-addr" value="" placeholder="XX:XX:XX:XX:XX:XX">
-            </div>
-          </div>
-          <div class="grid-2">
-            <div class="form-group">
-              <label>Offline Nøkkel (16-byte hex)</label>
-              <input type="password" class="lock-key" value="" placeholder="32 heksadesimale tegn">
-            </div>
-            <div class="form-group">
-              <label>Nøkkelspor (Slot)</label>
-              <input type="number" class="lock-slot" value="1" min="1" max="10">
-            </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+          <div style="font-weight: 700;">Dør #${count}</div>
+          <button type="button" class="btn btn-danger btn-sm" onclick="removeLockRow(this)">Fjern dør</button>
+        </div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label>Dørnavn</label>
+            <input type="text" class="lock-name" value="Dør ${count}" placeholder="Dørnavn">
           </div>
           <div class="form-group">
-            <label>Lås-ID i Booking API (påkrevd ved flere dører i WordPress)</label>
-            <input type="number" class="lock-id" value="" placeholder="f.eks. 1 eller 2" min="1">
+            <label>Bluetooth MAC-adresse</label>
+            <input type="text" class="lock-addr" value="" placeholder="XX:XX:XX:XX:XX:XX">
           </div>
         </div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label>Offline Nøkkel (16-byte hex)</label>
+            <input type="password" class="lock-key" value="" placeholder="32 heksadesimale tegn">
+          </div>
+          <div class="form-group">
+            <label>Nøkkelspor (Slot)</label>
+            <input type="number" class="lock-slot" value="1" min="1" max="10">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Lås-ID i Booking API (påkrevd ved flere dører i WordPress)</label>
+          <input type="number" class="lock-id" value="" placeholder="f.eks. 1 eller 2" min="1">
+        </div>
       `;
-      container.appendChild(div.firstElementChild);
+      container.appendChild(div);
+      // Ensure all cards have remove buttons when count > 1
+      const allCards = container.querySelectorAll('.lock-card');
+      if (allCards.length > 1) {
+        allCards.forEach(el => {
+          const header = el.querySelector('div:first-child');
+          if (header && !header.querySelector('.btn-danger')) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-danger btn-sm';
+            btn.textContent = 'Fjern dør';
+            btn.onclick = function() { removeLockRow(this); };
+            header.appendChild(btn);
+          }
+        });
+      }
     }
 
     async function saveLocks(e) {
@@ -522,24 +576,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         filled = true;
       }
       showToast(`Satte Lås-ID ${id} i skjemaet. Husk å lagre!`, 'info');
-    }
-
-      try {
-        const res = await fetch('/api/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ locks })
-        });
-        const data = await res.json();
-        if (data.success) {
-          showToast('Låsinnstillinger lagret!', 'success');
-          loadConfig();
-        } else {
-          showToast('Feil: ' + (data.errors || []).join(', '), 'error');
-        }
-      } catch (err) {
-        showToast('Kunne ikke lagre: ' + err.message, 'error');
-      }
     }
 
     async function saveApiSettings(e) {

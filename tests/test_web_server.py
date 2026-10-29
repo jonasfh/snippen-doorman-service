@@ -153,3 +153,156 @@ def test_web_server_endpoints(tmp_path) -> None:
 
     finally:
         server.stop()
+
+
+def test_web_dashboard_tabs_html_structure(tmp_path) -> None:
+    """Verify that dashboard HTML contains all four tabs and valid script bindings (#59)."""
+    env_file = tmp_path / "dash_test.env"
+    env_file.write_text('SNIPPEN_DOORMAN_BLE_ADDRESS="98:1B:B5:0B:BB:35"\n')
+    cfg_mgr = ConfigManager(env_file)
+    server = DoormanWebServer(host="127.0.0.1", port=0, config_manager=cfg_mgr)
+    server.start()
+
+    try:
+        base_url = f"http://127.0.0.1:{server._server.server_port}"
+        with urlopen(f"{base_url}/") as res:
+            assert res.status == 200
+            html = res.read().decode("utf-8")
+
+        # Verify all 4 tab containers exist
+        assert 'id="tab-status"' in html
+        assert 'id="tab-locks"' in html
+        assert 'id="tab-api"' in html
+        assert 'id="tab-ble"' in html
+
+        # Verify navigation buttons with robust click handlers
+        assert "showTab('status', this)" in html
+        assert "showTab('locks', this)" in html
+        assert "showTab('api', this)" in html
+        assert "showTab('ble', this)" in html
+
+        # Verify forms and controls exist
+        assert 'id="locks-form"' in html
+        assert 'id="api-form"' in html
+        assert 'id="ble-setup-status"' in html
+
+        # Verify key JavaScript functions are defined
+        assert "function showTab(name, btn)" in html
+        assert "function renderLocks(locks)" in html
+        assert "function addLockRow()" in html
+        assert "function removeLockRow(btn)" in html
+        assert "function saveLocks(e)" in html
+        assert "function saveApiSettings(e)" in html
+        assert "function activateBleSetup()" in html
+
+    finally:
+        server.stop()
+
+
+def test_web_server_discrete_multi_lock_save_and_cleanup(tmp_path) -> None:
+    """Verify GET/POST /api/config handles discrete multi-lock format and preserves secrets (#59)."""
+    env_file = tmp_path / "discrete_test.env"
+    env_file.write_text(
+        'DOORMAN_LOCK_1_NAME="Festsalen"\n'
+        'DOORMAN_LOCK_1_ADDRESS="AA:BB:CC:DD:EE:01"\n'
+        'DOORMAN_LOCK_1_KEY="0123456789abcdef0123456789abcdef"\n'
+        "DOORMAN_LOCK_1_SLOT=4\n"
+        "DOORMAN_LOCK_1_LOCK_ID=1\n"
+        'DOORMAN_LOCK_2_NAME="Peisestua"\n'
+        'DOORMAN_LOCK_2_ADDRESS="AA:BB:CC:DD:EE:02"\n'
+        'DOORMAN_LOCK_2_KEY="fedcba9876543210fedcba9876543210"\n'
+        "DOORMAN_LOCK_2_SLOT=2\n"
+        "DOORMAN_LOCK_2_LOCK_ID=1\n"
+    )
+    cfg_mgr = ConfigManager(env_file)
+    server = DoormanWebServer(host="127.0.0.1", port=0, config_manager=cfg_mgr)
+    server.start()
+
+    try:
+        base_url = f"http://127.0.0.1:{server._server.server_port}"
+
+        # 1. GET /api/config should load both discrete locks with masked keys
+        with urlopen(f"{base_url}/api/config") as res:
+            assert res.status == 200
+            cfg_data = json.loads(res.read().decode("utf-8"))
+            assert len(cfg_data["locks"]) == 2
+            assert cfg_data["locks"][0]["name"] == "Festsalen"
+            assert cfg_data["locks"][0]["lock_id"] == 1
+            assert "•" in cfg_data["locks"][0]["key_masked"]
+            assert cfg_data["locks"][1]["name"] == "Peisestua"
+            assert cfg_data["locks"][1]["lock_id"] == 1
+
+        # 2. POST /api/config sending back masked keys and updated slot/name
+        updated_locks_payload = {
+            "locks": [
+                {
+                    "name": "Festsalen Hovedinngang",
+                    "address": "AA:BB:CC:DD:EE:01",
+                    "key": cfg_data["locks"][0]["key_masked"],  # Masked key
+                    "slot": 5,
+                    "lock_id": 1,
+                },
+                {
+                    "name": "Peisestua",
+                    "address": "AA:BB:CC:DD:EE:02",
+                    "key": cfg_data["locks"][1]["key_masked"],  # Masked key
+                    "slot": 2,
+                    "lock_id": 1,
+                },
+            ]
+        }
+        req = Request(
+            f"{base_url}/api/config",
+            data=json.dumps(updated_locks_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(req) as res:
+            assert res.status == 200
+            resp = json.loads(res.read().decode("utf-8"))
+            assert resp["success"] is True
+
+        # Verify disk persistence kept secrets uncorrupted and updated slot
+        fresh_cfg = cfg_mgr.load_config()
+        assert len(fresh_cfg.locks) == 2
+        assert fresh_cfg.locks[0].name == "Festsalen Hovedinngang"
+        assert fresh_cfg.locks[0].slot == 5
+        assert fresh_cfg.locks[0].key == "0123456789abcdef0123456789abcdef"
+        assert fresh_cfg.locks[1].key == "fedcba9876543210fedcba9876543210"
+
+        # Verify discrete environment variables in env file
+        env_content = env_file.read_text(encoding="utf-8")
+        assert 'DOORMAN_LOCK_1_NAME="Festsalen Hovedinngang"' in env_content
+        assert 'DOORMAN_LOCK_1_SLOT="5"' in env_content
+        assert 'DOORMAN_LOCK_2_NAME="Peisestua"' in env_content
+
+        # 3. Reduce to 1 lock: DOORMAN_LOCK_2_* must be cleanly purged
+        single_lock_payload = {
+            "locks": [
+                {
+                    "name": "Festsalen Hovedinngang",
+                    "address": "AA:BB:CC:DD:EE:01",
+                    "key": "••••••••••••••••••••••••••••••••",
+                    "slot": 5,
+                    "lock_id": 1,
+                }
+            ]
+        }
+        req2 = Request(
+            f"{base_url}/api/config",
+            data=json.dumps(single_lock_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(req2) as res:
+            assert res.status == 200
+
+        after_content = env_file.read_text(encoding="utf-8")
+        assert "DOORMAN_LOCK_1_NAME" in after_content
+        assert "DOORMAN_LOCK_2_NAME" not in after_content
+        assert "DOORMAN_LOCK_2_ADDRESS" not in after_content
+
+        final_cfg = cfg_mgr.load_config()
+        assert len(final_cfg.locks) == 1
+        assert final_cfg.locks[0].name == "Festsalen Hovedinngang"
+
+    finally:
+        server.stop()
