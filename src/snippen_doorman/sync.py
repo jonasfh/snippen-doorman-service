@@ -55,7 +55,11 @@ class DoormanSyncEngine:
         self.store = store
         self.db = db
         self.lock_id = str(lock_id) if lock_id is not None else "default"
-        self.lock_ids = [str(lid) for lid in lock_ids if lid is not None] if lock_ids else None
+        self.lock_ids = (
+            list(dict.fromkeys(str(lid) for lid in lock_ids if lid is not None))
+            if lock_ids
+            else None
+        )
         self._network_down: bool = False
 
     async def sync_once(self, now: datetime | None = None) -> SyncTickResult:
@@ -90,7 +94,7 @@ class DoormanSyncEngine:
         result = SyncTickResult()
 
         target_locks: list[str | None] = (
-            list(self.lock_ids)
+            list(dict.fromkeys(self.lock_ids))
             if self.lock_ids
             else [self.lock_id if self.lock_id != "default" else None]
         )
