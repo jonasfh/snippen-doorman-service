@@ -129,7 +129,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <div class="stat-row"><span class="stat-label">Lokal IP:</span><span class="stat-val" id="sys-ip">-</span></div>
           <div class="stat-row"><span class="stat-label">WiFi Nettverk:</span><span class="stat-val" id="sys-wifi">-</span></div>
           <div class="stat-row"><span class="stat-label">Oppetid:</span><span class="stat-val" id="sys-uptime">-</span></div>
-          <div class="stat-row"><span class="stat-label">Tjenesteversjon:</span><span class="stat-val" id="sys-version">0.14.0</span></div>
+          <div class="stat-row"><span class="stat-label">Sikkerhet:</span><span class="stat-val" id="sys-tls">-</span></div>
+          <div class="stat-row"><span class="stat-label">Tjenesteversjon:</span><span class="stat-val" id="sys-version">-</span></div>
         </div>
 
         <!-- Lock Status -->
@@ -319,6 +320,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         document.getElementById('sys-ip').textContent = data.ip || '-';
         document.getElementById('sys-wifi').textContent = data.wifi_ssid || 'Kabel (Ethernet)';
         document.getElementById('sys-uptime').textContent = data.uptime || '-';
+        if (data.version) document.getElementById('sys-version').textContent = data.version;
+        const tlsEl = document.getElementById('sys-tls');
+        if (tlsEl) {
+          tlsEl.innerHTML = data.tls_enabled
+            ? '<span class="badge badge-green">HTTPS (TLS)</span>'
+            : '<span class="badge badge-yellow">HTTP (Ukryptert)</span>';
+        }
 
         if (data.primary_lock) {
           updateLockStateInUI(data.primary_lock);

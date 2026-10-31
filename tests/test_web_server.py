@@ -406,3 +406,97 @@ def test_web_server_http_basic_auth(tmp_path) -> None:
 
     finally:
         server.stop()
+
+
+def test_ensure_tls_certificate_and_ssl_context(tmp_path) -> None:
+    """Verify automatic generation of self-signed X.509 certificate, SAN entries, and idempotence (#68)."""
+    import ipaddress
+    import stat
+
+    from cryptography import x509
+
+    from snippen_doorman.web.tls import create_ssl_context, ensure_tls_certificate
+
+    cert_file = tmp_path / "tls" / "cert.pem"
+    key_file = tmp_path / "tls" / "key.pem"
+
+    c_path, k_path = ensure_tls_certificate(
+        cert_path=cert_file,
+        key_path=key_file,
+        extra_hosts=["192.168.10.42", "custom-gateway.local"],
+    )
+    assert c_path.is_file()
+    assert k_path.is_file()
+
+    # Check private key permissions (0600)
+    key_mode = stat.S_IMODE(k_path.stat().st_mode)
+    assert key_mode == 0o600
+
+    # Parse generated certificate and verify SANs
+    cert = x509.load_pem_x509_certificate(c_path.read_bytes())
+    san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+    dns_names = san_ext.value.get_values_for_type(x509.DNSName)
+    ip_addrs = san_ext.value.get_values_for_type(x509.IPAddress)
+
+    assert "localhost" in dns_names
+    assert "snippen-doorman-service.local" in dns_names
+    assert "custom-gateway.local" in dns_names
+    assert ipaddress.ip_address("127.0.0.1") in ip_addrs
+    assert ipaddress.ip_address("192.168.10.42") in ip_addrs
+
+    # Verify idempotence (existing files are reused without overwriting)
+    first_mtime = c_path.stat().st_mtime_ns
+    first_bytes = c_path.read_bytes()
+    c_path2, _ = ensure_tls_certificate(cert_path=cert_file, key_path=key_file)
+    assert c_path2.read_bytes() == first_bytes
+    assert c_path2.stat().st_mtime_ns == first_mtime
+
+    # Verify SSLContext loads certificate and key cleanly
+    ctx = create_ssl_context(c_path, k_path)
+    assert ctx is not None
+
+
+def test_web_server_https_tls_enabled(tmp_path) -> None:
+    """Verify DoormanWebServer serves HTTPS when tls_enabled=True (#68)."""
+    import ssl
+
+    env_file = tmp_path / "tls_test.env"
+    env_file.write_text('SNIPPEN_DOORMAN_BLE_ADDRESS="98:1B:B5:0B:BB:35"\n')
+    cfg_mgr = ConfigManager(env_file)
+    cert_file = tmp_path / "cert.pem"
+    key_file = tmp_path / "key.pem"
+
+    server = DoormanWebServer(
+        host="127.0.0.1",
+        port=0,
+        config_manager=cfg_mgr,
+        auth_enabled=False,
+        tls_enabled=True,
+        tls_cert_path=cert_file,
+        tls_key_path=key_file,
+    )
+    assert server.scheme == "https"
+    server.start()
+
+    try:
+        assert cert_file.is_file()
+        assert key_file.is_file()
+        base_url = f"https://127.0.0.1:{server._server.server_port}"
+
+        unverified_ctx = ssl.create_default_context()
+        unverified_ctx.check_hostname = False
+        unverified_ctx.verify_mode = ssl.CERT_NONE
+
+        with urlopen(f"{base_url}/api/status", context=unverified_ctx) as res:
+            assert res.status == 200
+            data = json.loads(res.read().decode("utf-8"))
+            assert data["tls_enabled"] is True
+            assert "version" in data
+
+        with urlopen(f"{base_url}/", context=unverified_ctx) as res:
+            assert res.status == 200
+            html = res.read().decode("utf-8")
+            assert "Snippen Doorman Gateway" in html
+            assert 'id="sys-tls"' in html
+    finally:
+        server.stop()

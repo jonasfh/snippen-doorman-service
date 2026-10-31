@@ -45,6 +45,9 @@ The doorman service can be configured via CLI flags or environment variables:
 | Sync Enabled | `SNIPPEN_DOORMAN_SYNC_ENABLED` | `true` | Enable/disable automatic Snippen synchronization |
 | Remote Lock ID | `SNIPPEN_DOORMAN_LOCK_ID` | *(None)* | Primary lock ID in WordPress Booking API (spec #47) |
 | Multi-Lock Config | `SNIPPEN_DOORMAN_LOCKS` | *(None)* | Multi-door configuration string or JSON array with lock IDs |
+| Web Dashboard TLS | `SNIPPEN_DOORMAN_WEB_TLS` | `true` | Enable HTTPS (TLS) with auto-generated self-signed certificate (#68) |
+| TLS Certificate | `SNIPPEN_DOORMAN_TLS_CERT` | `data/tls/cert.pem` | Path to TLS PEM certificate file (#68) |
+| TLS Private Key | `SNIPPEN_DOORMAN_TLS_KEY` | `data/tls/key.pem` | Path to TLS PEM private key file (#68) |
 
 ---
 
@@ -185,22 +188,22 @@ See [docs/raspberry_pi_setup.md](docs/raspberry_pi_setup.md) for the comprehensi
 
 ### Administrative Web Dashboard & BLE Setup
 
-`snippen-doorman-service` includes an embedded HTTP web dashboard on port `8080`:
+`snippen-doorman-service` includes an embedded HTTPS web dashboard on port `8080` (with automatic self-signed X.509 certificate generation in `data/tls/`):
 
 ```bash
-# Start standalone web dashboard
+# Start standalone web dashboard (HTTPS enabled by default; pass --no-tls for plain HTTP)
 snippen-doorman web --port 8080
 
 # Or run with the main service (enabled by default)
 snippen-doorman service run --web
 ```
 
-Access the dashboard at `http://snippen-doorman-service.local:8080` (or `http://<pi-ip>:8080`) to:
+Access the dashboard at `https://snippen-doorman-service.local:8080` (or `https://<pi-ip>:8080`) to:
 - Monitor live gateway telemetry, battery health, and door/lock states.
 - Test unlock and inspect live synchronization logs.
 - Configure Yale Doorman locks, offline keys, and WordPress Booking API credentials.
-- Provision WiFi over Bluetooth Low Energy via the companion PWA at `http://<pi-ip>:8080/web-config` (unauthenticated for direct mobile onboarding).
-- Protect dashboard operations with HTTP Basic Authentication by configuring `SNIPPEN_DOORMAN_ADMIN_PASSWORD` (default user `admin`).
+- Provision WiFi over Bluetooth Low Energy via the companion PWA at `https://<pi-ip>:8080/web-config` (unauthenticated for direct mobile onboarding; HTTPS satisfies Chrome's Secure Context requirement for Web Bluetooth).
+- Protect dashboard operations with HTTP Basic Authentication by configuring `SNIPPEN_DOORMAN_ADMIN_PASSWORD` (default user `admin`) over encrypted TLS.
 - Activate BLE setup mode on Raspberry Pi via physical GPIO button (GPIO 26) or UI button.
 
 ### Multi-Node Deployments & Independent Rental Units

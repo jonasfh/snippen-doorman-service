@@ -67,6 +67,9 @@ SNIPPEN_GRACE_PERIOD_MINUTES=15
 # Yale Doorman gjestespor (standard 3 til 9)
 SNIPPEN_GUEST_SLOT_MIN=3
 SNIPPEN_GUEST_SLOT_MAX=9
+
+# HTTPS (TLS) for Web Dashboard (genererer selvsignert sertifikat i data/tls/ ved første oppstart)
+SNIPPEN_DOORMAN_WEB_TLS=true
 ```
 
 > **Sikkerhet:** Filen inneholder kryptonøkler og API-token. Kontroller at rettighetene alltid er begrenset:

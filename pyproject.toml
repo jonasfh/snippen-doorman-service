@@ -12,6 +12,7 @@ authors = [
     { name = "Snippen", email = "admin@snippen.com" }
 ]
 dependencies = [
+    "cryptography>=41.0.0",
     "packaging>=23.0",
     "yalexs-ble>=4.0.5",
     "bleak>=3.0.2",
