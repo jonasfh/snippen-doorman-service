@@ -21,19 +21,19 @@
   },
   "runArgs": [
     "--privileged",
-    "--net=host",
     "-v",
     "/dev:/dev"
   ],
-  "postCreateCommand": "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh docker.io bluez adb && sudo chown -R vscode:vscode /home/vscode/.gemini && sudo usermod -aG docker vscode && sudo usermod -aG dialout vscode && python3 -m venv /home/vscode/.venv && /home/vscode/.venv/bin/pip install -e \".[dev]\" && (if [ -S /var/run/docker.sock ]; then DOCKER_GID=$(stat -c '%g' /var/run/docker.sock); sudo groupmod -g $DOCKER_GID docker || sudo groupadd -g $DOCKER_GID docker-host || true; sudo usermod -aG $DOCKER_GID vscode || sudo usermod -aG docker-host vscode || true; sudo chmod 666 /var/run/docker.sock || true; fi)",
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.gemini && sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh docker.io bluez adb && sudo usermod -aG docker vscode && sudo usermod -aG dialout vscode && python3 -m venv /home/vscode/.venv && /home/vscode/.venv/bin/pip install -e \".[dev]\" && (if [ -S /var/run/docker.sock ]; then DOCKER_GID=$(stat -c '%g' /var/run/docker.sock); sudo groupmod -g $DOCKER_GID docker || sudo groupadd -g $DOCKER_GID docker-host || true; sudo usermod -aG $DOCKER_GID vscode || sudo usermod -aG docker-host vscode || true; sudo chmod 666 /var/run/docker.sock || true; fi)",
   "postStartCommand": "sudo chmod 666 /var/run/docker.sock 2>/dev/null || true",
   "remoteUser": "vscode",
   "mounts": [
-    "source=snippen-doorman-service-gemini-data,target=/home/vscode/.gemini,type=volume",
+    "source=${localWorkspaceFolderBasename}-gemini-data,target=/home/vscode/.gemini,type=volume",
     "source=${localWorkspaceFolder}/..,target=/workspaces,type=bind,consistency=cached",
     "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
-    "source=/var/run/dbus/system_bus_socket,target=/var/run/dbus/system_bus_socket,type=bind"
+    "source=/var/run/dbus/system_bus_socket,target=/var/run/dbus/system_bus_socket,type=bind",
+    "source=${localEnv:HOME}/.gitconfig,target=/etc/gitconfig,type=bind,readonly"
   ],
- "workspaceFolder": "/workspaces/snippen-doorman-service",
- "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/snippen-doorman-service,type=bind,consistency=cached"
+  "workspaceFolder": "/workspaces/snippen-doorman-service",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/snippen-doorman-service,type=bind,consistency=cached"
 }
