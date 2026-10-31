@@ -455,12 +455,44 @@ def test_main_cli_service_with_multi_lock(
 
 
 def test_web_subcommand_parser() -> None:
-    """Test argument parser for web subcommand."""
+    """Test argument parser for web subcommand including TLS flags."""
     parser = build_parser()
     args = parser.parse_args(
-        ["web", "--host", "127.0.0.1", "--port", "9090", "--env-file", "my.env"]
+        [
+            "web",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "9090",
+            "--env-file",
+            "my.env",
+            "--no-tls",
+            "--tls-cert",
+            "custom/cert.pem",
+            "--tls-key",
+            "custom/key.pem",
+        ]
     )
     assert args.subcommand == "web"
     assert args.host == "127.0.0.1"
     assert args.port == 9090
     assert args.env_file == "my.env"
+    assert args.tls_enabled is False
+    assert args.tls_cert == "custom/cert.pem"
+    assert args.tls_key == "custom/key.pem"
+
+    # Verify service run TLS flags
+    srv_args = parser.parse_args(
+        [
+            "service",
+            "run",
+            "--tls",
+            "--tls-cert",
+            "srv/cert.pem",
+            "--tls-key",
+            "srv/key.pem",
+        ]
+    )
+    assert srv_args.web_tls is True
+    assert srv_args.tls_cert == "srv/cert.pem"
+    assert srv_args.tls_key == "srv/key.pem"

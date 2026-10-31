@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-10-31
+
+### Added
+- Automatic self-signed X.509 certificate and ECDSA private key generation (`src/snippen_doorman/web/tls.py`) with Subject Alternative Names (SAN) for `localhost`, `snippen-doorman-service.local`, host hostname, and local IPv4 addresses (#68).
+- Built-in HTTPS/TLS support in `DoormanWebServer` (`ssl.SSLContext` with minimum `TLSv1.2`), protecting HTTP Basic Authentication credentials, API tokens, and Yale BLE keys in transit as well as enabling Chrome Web Bluetooth Secure Context on local network IPs (#68).
+- CLI options (`--tls` / `--no-tls`, `--tls-cert`, `--tls-key`) and environment variables (`SNIPPEN_DOORMAN_WEB_TLS`, `SNIPPEN_DOORMAN_TLS_CERT`, `SNIPPEN_DOORMAN_TLS_KEY`) for `service run` and `web` subcommands (#68).
+- TLS connection indicator badge in the Web Dashboard Gateway Status panel and dynamic service version display (#68).
+
 ## [0.16.1] - 2026-10-29
 
 ### Added

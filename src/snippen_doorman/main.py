@@ -328,6 +328,9 @@ async def run_service_command(
     enable_web: bool = True,
     web_host: str = "0.0.0.0",
     web_port: int = 8080,
+    web_tls: bool = True,
+    tls_cert: str = "data/tls/cert.pem",
+    tls_key: str = "data/tls/key.pem",
 ) -> None:
     """Run Snippen Booking synchronization service or single tick."""
     path = database_path if storage_type == "sqlite" else json_path
@@ -467,9 +470,12 @@ async def run_service_command(
                     gpio_handler=gpio_handler,
                     ble_peripheral=ble_peripheral,
                     event_loop=asyncio.get_running_loop(),
+                    tls_enabled=web_tls,
+                    tls_cert_path=tls_cert,
+                    tls_key_path=tls_key,
                 )
                 web_server.start()
-                print(f"Web Dashboard listening on http://{web_host}:{web_port}")
+                print(f"Web Dashboard listening on {web_server.scheme}://{web_host}:{web_port}")
 
             stop_event = asyncio.Event()
             loop = asyncio.get_running_loop()
@@ -501,6 +507,9 @@ async def run_web_command(
     port: int = 8080,
     database_path: str = "data/doorman.db",
     env_file: str | None = None,
+    tls_enabled: bool = True,
+    tls_cert: str = "data/tls/cert.pem",
+    tls_key: str = "data/tls/key.pem",
 ) -> None:
     """Run standalone administrative Web Dashboard."""
     from snippen_doorman.ble.wifi_peripheral import BleWifiPeripheral
@@ -529,9 +538,12 @@ async def run_web_command(
         gpio_handler=gpio_handler,
         ble_peripheral=ble_peripheral,
         event_loop=loop,
+        tls_enabled=tls_enabled,
+        tls_cert_path=tls_cert,
+        tls_key_path=tls_key,
     )
     web_server.start()
-    print(f"Snippen Doorman Web Dashboard listening on http://{host}:{port}")
+    print(f"Snippen Doorman Web Dashboard listening on {web_server.scheme}://{host}:{port}")
 
     stop_event = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -904,6 +916,24 @@ def build_parser() -> argparse.ArgumentParser:
             default=8080,
             help="Web dashboard port (default: 8080)",
         )
+        default_tls = os.getenv("SNIPPEN_DOORMAN_WEB_TLS", "true").lower() in ("1", "true", "yes")
+        p.add_argument(
+            "--tls",
+            dest="web_tls",
+            action=argparse.BooleanOptionalAction,
+            default=default_tls,
+            help="Enable HTTPS/TLS for Web Dashboard with auto-generated self-signed certificate (default: True)",
+        )
+        p.add_argument(
+            "--tls-cert",
+            default=os.getenv("SNIPPEN_DOORMAN_TLS_CERT", "data/tls/cert.pem"),
+            help="Path to TLS certificate PEM file (default: data/tls/cert.pem)",
+        )
+        p.add_argument(
+            "--tls-key",
+            default=os.getenv("SNIPPEN_DOORMAN_TLS_KEY", "data/tls/key.pem"),
+            help="Path to TLS private key PEM file (default: data/tls/key.pem)",
+        )
         add_common_conn_args(p, slot_name="key_slot", required=False, include_timeout=False)
 
     # service run
@@ -921,6 +951,24 @@ def build_parser() -> argparse.ArgumentParser:
     web_parser.add_argument("--host", default="0.0.0.0", help="Web host (default: 0.0.0.0)")
     web_parser.add_argument("--port", type=int, default=8080, help="Web port (default: 8080)")
     web_parser.add_argument("--env-file", default=None, help="Path to env configuration file")
+    default_web_tls = os.getenv("SNIPPEN_DOORMAN_WEB_TLS", "true").lower() in ("1", "true", "yes")
+    web_parser.add_argument(
+        "--tls",
+        dest="tls_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=default_web_tls,
+        help="Enable HTTPS/TLS with auto-generated self-signed certificate (default: True)",
+    )
+    web_parser.add_argument(
+        "--tls-cert",
+        default=os.getenv("SNIPPEN_DOORMAN_TLS_CERT", "data/tls/cert.pem"),
+        help="Path to TLS certificate PEM file (default: data/tls/cert.pem)",
+    )
+    web_parser.add_argument(
+        "--tls-key",
+        default=os.getenv("SNIPPEN_DOORMAN_TLS_KEY", "data/tls/key.pem"),
+        help="Path to TLS private key PEM file (default: data/tls/key.pem)",
+    )
 
     return parser
 
@@ -1054,6 +1102,9 @@ def main_cli(argv: list[str] | None = None) -> None:
                     enable_web=getattr(args, "enable_web", True),
                     web_host=getattr(args, "web_host", "0.0.0.0"),
                     web_port=getattr(args, "web_port", 8080),
+                    web_tls=getattr(args, "web_tls", True),
+                    tls_cert=getattr(args, "tls_cert", "data/tls/cert.pem"),
+                    tls_key=getattr(args, "tls_key", "data/tls/key.pem"),
                 )
             )
         except (KeyboardInterrupt, SystemExit):
@@ -1069,6 +1120,9 @@ def main_cli(argv: list[str] | None = None) -> None:
                     port=args.port,
                     database_path=args.database_path,
                     env_file=args.env_file,
+                    tls_enabled=getattr(args, "tls_enabled", True),
+                    tls_cert=getattr(args, "tls_cert", "data/tls/cert.pem"),
+                    tls_key=getattr(args, "tls_key", "data/tls/key.pem"),
                 )
             )
         except (KeyboardInterrupt, SystemExit):

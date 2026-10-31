@@ -76,7 +76,9 @@ class ConfigManager:
         env_map = self._read_env_file()
 
         def get_val(key: str, default: str) -> str:
-            return os.getenv(key, env_map.get(key, default))
+            if key in env_map:
+                return env_map[key]
+            return os.getenv(key, default)
 
         api_url = get_val(
             "SNIPPEN_DOORMAN_API_URL", "https://vestreholmensameie.no/wp-json/snippen/v1/door"

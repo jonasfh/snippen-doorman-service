@@ -10,6 +10,8 @@ import json
 import logging
 import mimetypes
 import socket
+import ssl
+import sys
 import threading
 from collections import deque
 from datetime import UTC, datetime
@@ -17,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from snippen_doorman import __version__
 from snippen_doorman.ble.client import YaleLockClient
 from snippen_doorman.ble.wifi_peripheral import BleWifiPeripheral
 from snippen_doorman.booking_client import SnippenBookingClient
@@ -25,9 +28,21 @@ from snippen_doorman.db import Database
 from snippen_doorman.gpio_button import GpioButtonHandler
 from snippen_doorman.sync import DoormanSyncEngine
 from snippen_doorman.web.html import DASHBOARD_HTML
+from snippen_doorman.web.tls import create_ssl_context, ensure_tls_certificate
 from snippen_doorman.wifi_manager import WifiManager
 
 logger = logging.getLogger(__name__)
+
+
+class _QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer that suppresses noisy client disconnect and TLS handshake tracebacks."""
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ssl.SSLError, ConnectionResetError, BrokenPipeError, TimeoutError)):
+            logger.debug("Client connection error from %s: %s", client_address, exc)
+            return
+        super().handle_error(request, client_address)
 
 
 def get_local_ip() -> str:
@@ -57,6 +72,9 @@ class DoormanWebServer:
         ble_peripheral: BleWifiPeripheral | None = None,
         event_loop: asyncio.AbstractEventLoop | None = None,
         auth_enabled: bool = True,
+        tls_enabled: bool = False,
+        tls_cert_path: str | Path = "data/tls/cert.pem",
+        tls_key_path: str | Path = "data/tls/key.pem",
     ) -> None:
         """Initialize web server.
 
@@ -71,6 +89,9 @@ class DoormanWebServer:
             ble_peripheral: BLE WiFi peripheral setup controller.
             event_loop: Asyncio event loop used for executing BLE operations.
             auth_enabled: Whether HTTP Basic Authentication is enforced (default: True).
+            tls_enabled: Whether HTTPS/TLS is enabled (default: False).
+            tls_cert_path: Path to PEM certificate file (auto-generated if missing).
+            tls_key_path: Path to PEM private key file (auto-generated if missing).
         """
         self.host = host
         self.port = port
@@ -82,6 +103,9 @@ class DoormanWebServer:
         self.ble_peripheral = ble_peripheral
         self.event_loop = event_loop
         self.auth_enabled = auth_enabled
+        self.tls_enabled = tls_enabled
+        self.tls_cert_path = Path(tls_cert_path)
+        self.tls_key_path = Path(tls_key_path)
         self.start_time = datetime.now(UTC)
 
         self._lock_status_cache: dict[str, dict[str, Any]] = {}
@@ -90,6 +114,11 @@ class DoormanWebServer:
         self._thread: threading.Thread | None = None
 
         self.record_event("Web dashboard initialisert.")
+
+    @property
+    def scheme(self) -> str:
+        """Return the URL scheme ('https' or 'http') used by this server."""
+        return "https" if self.tls_enabled else "http"
 
     def record_event(self, msg: str) -> None:
         """Add an event line to the in-memory ring buffer."""
@@ -290,6 +319,8 @@ class DoormanWebServer:
                         "ip": wifi_status.get("ip") or get_local_ip(),
                         "wifi_ssid": wifi_status.get("ssid"),
                         "uptime": uptime_str,
+                        "version": __version__,
+                        "tls_enabled": parent.tls_enabled,
                         "events": parent.get_events(),
                         "primary_lock": primary_lock_info,
                         "locks": all_locks_info,
@@ -559,12 +590,21 @@ class DoormanWebServer:
 
                 self._send_json(404, {"error": "Endpoint not found"})
 
-        self._server = ThreadingHTTPServer((self.host, self.port), Handler)
+        self._server = _QuietThreadingHTTPServer((self.host, self.port), Handler)
+        if self.tls_enabled:
+            cert_file, key_file = ensure_tls_certificate(
+                cert_path=self.tls_cert_path,
+                key_path=self.tls_key_path,
+                extra_hosts=[self.host],
+            )
+            ssl_ctx = create_ssl_context(cert_file, key_file)
+            self._server.socket = ssl_ctx.wrap_socket(self._server.socket, server_side=True)
+
         self._thread = threading.Thread(
             target=self._server.serve_forever, daemon=True, name="doorman-web-server"
         )
         self._thread.start()
-        logger.info("DoormanWebServer listening on http://%s:%d", self.host, self.port)
+        logger.info("DoormanWebServer listening on %s://%s:%d", self.scheme, self.host, self.port)
 
     def stop(self) -> None:
         """Shut down the HTTP server."""
