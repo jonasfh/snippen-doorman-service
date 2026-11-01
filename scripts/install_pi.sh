@@ -78,21 +78,20 @@ if [ ! -d "${VENV_DIR}" ]; then
 fi
 
 WHEEL_PATH="${1:-}"
-if [ -z "${WHEEL_PATH}" ]; then
-    # Look for existing wheel in dist/
-    if ls "${REPO_ROOT}/dist/"*.whl 1>/dev/null 2>&1; then
-        WHEEL_PATH="$(ls -t "${REPO_ROOT}/dist/"*.whl | head -n1)"
-    fi
-fi
 
 if [ -n "${WHEEL_PATH}" ] && [ -f "${WHEEL_PATH}" ]; then
     echo "   Installing from prebuilt wheel: ${WHEEL_PATH}..."
     "${VENV_DIR}/bin/pip" install --upgrade pip
-    "${VENV_DIR}/bin/pip" install "${WHEEL_PATH}"
+    "${VENV_DIR}/bin/pip" install --upgrade --force-reinstall "${WHEEL_PATH}"
 elif [ -f "${REPO_ROOT}/pyproject.toml" ]; then
     echo "   Installing directly from source repository at ${REPO_ROOT}..."
     "${VENV_DIR}/bin/pip" install --upgrade pip
-    "${VENV_DIR}/bin/pip" install "${REPO_ROOT}"
+    "${VENV_DIR}/bin/pip" install --upgrade "${REPO_ROOT}"
+elif ls "${REPO_ROOT}/dist/"*.whl 1>/dev/null 2>&1; then
+    WHEEL_PATH="$(ls -t "${REPO_ROOT}/dist/"*.whl | head -n1)"
+    echo "   Installing from dist wheel: ${WHEEL_PATH}..."
+    "${VENV_DIR}/bin/pip" install --upgrade pip
+    "${VENV_DIR}/bin/pip" install --upgrade --force-reinstall "${WHEEL_PATH}"
 else
     echo "❌ Error: Could not locate a .whl package or pyproject.toml to install." >&2
     exit 1
