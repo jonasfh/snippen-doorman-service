@@ -467,6 +467,7 @@ async def run_service_command(
                     config_manager=cfg_mgr,
                     sync_engine=sync_engine,
                     db=db,
+                    store=store,
                     gpio_handler=gpio_handler,
                     ble_peripheral=ble_peripheral,
                     event_loop=asyncio.get_running_loop(),

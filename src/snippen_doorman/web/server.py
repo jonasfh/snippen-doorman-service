@@ -14,7 +14,7 @@ import ssl
 import sys
 import threading
 from collections import deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,7 @@ from snippen_doorman.booking_client import SnippenBookingClient
 from snippen_doorman.config_manager import ConfigManager
 from snippen_doorman.db import Database
 from snippen_doorman.gpio_button import GpioButtonHandler
+from snippen_doorman.state import ReservationStore, SqliteReservationStore
 from snippen_doorman.sync import DoormanSyncEngine
 from snippen_doorman.web.html import DASHBOARD_HTML
 from snippen_doorman.web.tls import create_ssl_context, ensure_tls_certificate
@@ -82,6 +83,7 @@ class DoormanWebServer:
         config_manager: ConfigManager | None = None,
         sync_engine: DoormanSyncEngine | None = None,
         db: Database | None = None,
+        store: ReservationStore | None = None,
         gpio_handler: GpioButtonHandler | None = None,
         wifi_manager: WifiManager | None = None,
         ble_peripheral: BleWifiPeripheral | None = None,
@@ -98,7 +100,8 @@ class DoormanWebServer:
             port: Bind TCP port (default: 8080).
             config_manager: Configuration persistence manager.
             sync_engine: Optional running sync engine instance.
-            db: Optional Database instance for querying telemetry.
+            db: Optional Database instance for querying telemetry and PINs.
+            store: Optional ReservationStore instance for querying synced reservations.
             gpio_handler: Optional GPIO button monitor.
             wifi_manager: NetworkManager WiFi manager instance.
             ble_peripheral: BLE WiFi peripheral setup controller.
@@ -112,7 +115,8 @@ class DoormanWebServer:
         self.port = port
         self.config_manager = config_manager or ConfigManager()
         self.sync_engine = sync_engine
-        self.db = db or Database()
+        self.db = db or (sync_engine.db if sync_engine else Database())
+        self.store = store or (sync_engine.store if sync_engine else None)
         self.gpio_handler = gpio_handler
         self.wifi_manager = wifi_manager or WifiManager()
         self.ble_peripheral = ble_peripheral
@@ -144,6 +148,163 @@ class DoormanWebServer:
     def get_events(self) -> list[dict[str, str]]:
         """Return a list of recent events."""
         return list(self._events)
+
+    def get_database_overview(self) -> dict[str, Any]:
+        """Build a complete snapshot of local database reservations, PIN schedules, and lock slots."""
+        cfg = self.config_manager.load_config()
+        lead_delta = timedelta(minutes=cfg.lead_time_minutes)
+        grace_delta = timedelta(minutes=cfg.grace_period_minutes)
+
+        lock_names_by_id: dict[str, list[str]] = {}
+        for lk in cfg.locks:
+            key_id = str(lk.lock_id) if lk.lock_id is not None else "default"
+            lock_names_by_id.setdefault(key_id, []).append(lk.name)
+
+        pins_records = self.db.list_pins() if self.db else []
+        pins_data: list[dict[str, Any]] = []
+        for r in pins_records:
+            matched_names = lock_names_by_id.get(str(r.lock_id), [])
+            if not matched_names and str(r.lock_id) == "default" and cfg.locks:
+                matched_names = [cfg.locks[0].name]
+            lock_label = (
+                f"{', '.join(matched_names)} (ID {r.lock_id})"
+                if matched_names and str(r.lock_id) != "default"
+                else (", ".join(matched_names) if matched_names else str(r.lock_id))
+            )
+            pins_data.append(
+                {
+                    "id": r.id,
+                    "booking_id": r.booking_id,
+                    "lock_id": r.lock_id,
+                    "lock_label": lock_label,
+                    "slot": r.slot,
+                    "pin": r.pin,
+                    "pin_masked": "•" * len(r.pin) if r.pin else "",
+                    "status": r.status.value,
+                    "valid_from": r.valid_from.isoformat(),
+                    "valid_to": r.valid_to.isoformat(),
+                    "activation_time": (r.valid_from - lead_delta).isoformat(),
+                    "deactivation_time": (r.valid_to + grace_delta).isoformat(),
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "modified_at": r.modified_at.isoformat() if r.modified_at else None,
+                }
+            )
+
+        # Read synced reservations from ReservationStore (or fallback to same SQLite file)
+        reservations_records = []
+        if self.store is not None:
+            reservations_records = self.store.list_reservations()
+        elif (
+            self.db is not None
+            and self.db.db_path != ":memory:"
+            and Path(self.db.db_path).is_file()
+        ):
+            try:
+                with SqliteReservationStore(self.db.db_path) as tmp_store:
+                    reservations_records = tmp_store.list_reservations()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Could not read reservations table from %s: %s", self.db.db_path, exc)
+
+        reservations_data: list[dict[str, Any]] = []
+        for res in reservations_records:
+            reservations_data.append(
+                {
+                    "booking_id": res.booking_id,
+                    "lock_id": res.lock_id,
+                    "pin": res.pin,
+                    "pin_masked": "•" * len(res.pin) if res.pin else "",
+                    "status": res.status.value,
+                    "valid_from": res.valid_from.isoformat(),
+                    "valid_to": res.valid_to.isoformat(),
+                    "last_seen_at": res.last_seen_at.isoformat() if res.last_seen_at else None,
+                    "created_at": res.created_at.isoformat() if res.created_at else None,
+                    "modified_at": res.modified_at.isoformat() if res.modified_at else None,
+                }
+            )
+
+        # Build guest slot map (slots guest_slot_min..guest_slot_max, default 3..9)
+        active_slot_statuses = {"PROVISIONED", "PENDING_UPDATE", "PENDING_REVOKE"}
+        slot_min = min(cfg.guest_slot_min, cfg.guest_slot_max)
+        slot_max = max(cfg.guest_slot_min, cfg.guest_slot_max)
+        slots_data: list[dict[str, Any]] = []
+        for slot_num in range(slot_min, slot_max + 1):
+            occupants = [
+                p
+                for p in pins_data
+                if p["slot"] == slot_num and p["status"] in active_slot_statuses
+            ]
+            if occupants:
+                occ = occupants[0]
+                slots_data.append(
+                    {
+                        "slot": slot_num,
+                        "occupied": True,
+                        "booking_id": occ["booking_id"],
+                        "lock_id": occ["lock_id"],
+                        "lock_label": occ["lock_label"],
+                        "status": occ["status"],
+                        "valid_from": occ["valid_from"],
+                        "valid_to": occ["valid_to"],
+                    }
+                )
+            else:
+                slots_data.append(
+                    {
+                        "slot": slot_num,
+                        "occupied": False,
+                        "booking_id": None,
+                        "lock_id": None,
+                        "lock_label": None,
+                        "status": "FREE",
+                        "valid_from": None,
+                        "valid_to": None,
+                    }
+                )
+
+        # Lock telemetry rows in DB
+        telemetry_rows = self.db.list_lock_statuses() if self.db else []
+        telemetry_data = [
+            {
+                "lock_address": st.lock_address,
+                "lock_status": st.lock_status,
+                "door_status": st.door_status,
+                "battery": st.battery,
+                "modified_at": st.modified_at.isoformat() if st.modified_at else None,
+            }
+            for st in telemetry_rows
+        ]
+
+        provisioned_count = sum(1 for p in pins_data if p["status"] == "PROVISIONED")
+        scheduled_count = sum(1 for p in pins_data if p["status"] == "SCHEDULED")
+        pending_count = sum(
+            1 for p in pins_data if p["status"] in ("PENDING_UPDATE", "PENDING_REVOKE")
+        )
+        history_count = sum(1 for p in pins_data if p["status"] in ("EXPIRED", "REVOKED"))
+        slots_occupied = sum(1 for s in slots_data if s["occupied"])
+
+        return {
+            "summary": {
+                "database_path": self.db.db_path if self.db else None,
+                "total_pins": len(pins_data),
+                "provisioned_count": provisioned_count,
+                "scheduled_count": scheduled_count,
+                "pending_count": pending_count,
+                "history_count": history_count,
+                "reservations_total": len(reservations_data),
+                "reservations_active": sum(1 for r in reservations_data if r["status"] == "ACTIVE"),
+                "slots_min": slot_min,
+                "slots_max": slot_max,
+                "slots_total": len(slots_data),
+                "slots_occupied": slots_occupied,
+                "slots_free": len(slots_data) - slots_occupied,
+                "lead_time_minutes": cfg.lead_time_minutes,
+                "grace_period_minutes": cfg.grace_period_minutes,
+            },
+            "slots": slots_data,
+            "pins": pins_data,
+            "reservations": reservations_data,
+            "lock_telemetry": telemetry_data,
+        }
 
     def run_coroutine(self, coro: Any, timeout: float = 25.0) -> Any:
         """Execute an async coroutine either via the provided event loop or a new loop."""
@@ -354,6 +515,10 @@ class DoormanWebServer:
                 if self.path == "/api/config":
                     cfg = parent.config_manager.load_config()
                     self._send_json(200, parent.config_manager.to_safe_dict(cfg))
+                    return
+
+                if self.path == "/api/database/overview":
+                    self._send_json(200, parent.get_database_overview())
                     return
 
                 if self.path == "/api/remote-locks":

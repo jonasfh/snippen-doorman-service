@@ -172,14 +172,16 @@ def test_web_dashboard_tabs_html_structure(tmp_path) -> None:
             assert res.status == 200
             html = res.read().decode("utf-8")
 
-        # Verify all 4 tab containers exist
+        # Verify all 5 tab containers exist
         assert 'id="tab-status"' in html
+        assert 'id="tab-db"' in html
         assert 'id="tab-locks"' in html
         assert 'id="tab-api"' in html
         assert 'id="tab-ble"' in html
 
         # Verify navigation buttons with robust click handlers
         assert "showTab('status', this)" in html
+        assert "showTab('db', this)" in html
         assert "showTab('locks', this)" in html
         assert "showTab('api', this)" in html
         assert "showTab('ble', this)" in html
@@ -188,9 +190,16 @@ def test_web_dashboard_tabs_html_structure(tmp_path) -> None:
         assert 'id="locks-form"' in html
         assert 'id="api-form"' in html
         assert 'id="ble-setup-status"' in html
+        assert 'id="db-slots-grid"' in html
+        assert 'id="db-pins-tbody"' in html
+        assert 'id="db-reservations-tbody"' in html
 
         # Verify key JavaScript functions are defined
         assert "function showTab(name, btn)" in html
+        assert "function loadDatabaseOverview()" in html
+        assert "function renderDatabaseOverview(data)" in html
+        assert "function togglePinVisibility()" in html
+        assert "function setDbFilter(mode)" in html
         assert "function renderLocks(locks)" in html
         assert "function addLockRow()" in html
         assert "function removeLockRow(btn)" in html
@@ -520,3 +529,153 @@ def test_web_server_https_tls_enabled(tmp_path) -> None:
         if idle_sock is not None:
             idle_sock.close()
         server.stop()
+
+
+def test_web_server_database_overview_endpoint(tmp_path) -> None:
+    """Verify GET /api/database/overview returns reservations, PIN statuses, slot allocation, and telemetry (#69)."""
+    from datetime import UTC, datetime, timedelta
+
+    from snippen_doorman.db import Database, PinStatus
+    from snippen_doorman.state import (
+        ReservationRecord,
+        ReservationStatus,
+        SqliteReservationStore,
+    )
+
+    env_file = tmp_path / "db_overview.env"
+    env_file.write_text(
+        'DOORMAN_LOCK_1_NAME="Festsalen"\n'
+        'DOORMAN_LOCK_1_ADDRESS="AA:BB:CC:DD:EE:01"\n'
+        'DOORMAN_LOCK_1_KEY="0123456789abcdef0123456789abcdef"\n'
+        "DOORMAN_LOCK_1_SLOT=1\n"
+        "DOORMAN_LOCK_1_LOCK_ID=1\n"
+        "SNIPPEN_LEAD_TIME_MINUTES=60\n"
+        "SNIPPEN_GRACE_PERIOD_MINUTES=15\n"
+        "SNIPPEN_GUEST_SLOT_MIN=3\n"
+        "SNIPPEN_GUEST_SLOT_MAX=9\n"
+    )
+    cfg_mgr = ConfigManager(env_file)
+    db_file = tmp_path / "overview.db"
+    db = Database(db_file)
+    store = SqliteReservationStore(db_file)
+
+    now = datetime(2026, 11, 1, 12, 0, 0, tzinfo=UTC)
+    vf1 = now - timedelta(minutes=30)
+    vt1 = now + timedelta(hours=4)
+
+    # 1. Active provisioned PIN in slot 9
+    db.create_pin(
+        booking_id="18",
+        pin="123456",
+        valid_from=vf1,
+        valid_to=vt1,
+        status=PinStatus.PROVISIONED,
+        slot=9,
+        lock_id="1",
+    )
+
+    # 2. Upcoming scheduled PIN
+    vf2 = now + timedelta(hours=5)
+    vt2 = now + timedelta(hours=8)
+    db.create_pin(
+        booking_id="19",
+        pin="654321",
+        valid_from=vf2,
+        valid_to=vt2,
+        status=PinStatus.SCHEDULED,
+        slot=None,
+        lock_id="1",
+    )
+
+    # 3. Expired PIN in history
+    db.create_pin(
+        booking_id="10",
+        pin="111222",
+        valid_from=now - timedelta(days=2),
+        valid_to=now - timedelta(days=1),
+        status=PinStatus.EXPIRED,
+        slot=None,
+        lock_id="1",
+    )
+
+    # 4. Synced WordPress reservation in store
+    store.save_reservation(
+        ReservationRecord(
+            booking_id="18",
+            lock_id="1",
+            pin="123456",
+            status=ReservationStatus.ACTIVE,
+            valid_from=vf1,
+            valid_to=vt1,
+        )
+    )
+
+    # 5. Lock telemetry row
+    db.record_lock_status(
+        lock_address="AA:BB:CC:DD:EE:01",
+        lock_status="LOCKED",
+        door_status="CLOSED",
+        battery=88,
+    )
+
+    server = DoormanWebServer(
+        host="127.0.0.1",
+        port=0,
+        config_manager=cfg_mgr,
+        db=db,
+        store=store,
+        auth_enabled=False,
+    )
+    server.start()
+
+    try:
+        base_url = f"http://127.0.0.1:{server._server.server_port}"
+        with urlopen(f"{base_url}/api/database/overview") as res:
+            assert res.status == 200
+            overview = json.loads(res.read().decode("utf-8"))
+
+        summary = overview["summary"]
+        assert summary["total_pins"] == 3
+        assert summary["provisioned_count"] == 1
+        assert summary["scheduled_count"] == 1
+        assert summary["pending_count"] == 0
+        assert summary["history_count"] == 1
+        assert summary["reservations_total"] == 1
+        assert summary["reservations_active"] == 1
+        assert summary["slots_min"] == 3
+        assert summary["slots_max"] == 9
+        assert summary["slots_total"] == 7
+        assert summary["slots_occupied"] == 1
+        assert summary["slots_free"] == 6
+
+        slots = overview["slots"]
+        assert len(slots) == 7
+        slot_9 = next(s for s in slots if s["slot"] == 9)
+        assert slot_9["occupied"] is True
+        assert slot_9["booking_id"] == "18"
+        assert "Festsalen" in slot_9["lock_label"]
+        slot_8 = next(s for s in slots if s["slot"] == 8)
+        assert slot_8["occupied"] is False
+        assert slot_8["status"] == "FREE"
+
+        pins = overview["pins"]
+        assert len(pins) == 3
+        p18 = next(p for p in pins if p["booking_id"] == "18")
+        assert p18["status"] == "PROVISIONED"
+        assert p18["slot"] == 9
+        assert p18["pin"] == "123456"
+        assert p18["pin_masked"] == "••••••"
+
+        reservations = overview["reservations"]
+        assert len(reservations) == 1
+        assert reservations[0]["booking_id"] == "18"
+        assert reservations[0]["status"] == "ACTIVE"
+
+        telemetry = overview["lock_telemetry"]
+        assert len(telemetry) == 1
+        assert telemetry[0]["lock_address"] == "AA:BB:CC:DD:EE:01"
+        assert telemetry[0]["battery"] == 88
+    finally:
+        server.stop()
+        store.close()
+        db.close()
