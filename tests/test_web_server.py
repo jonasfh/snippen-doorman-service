@@ -469,7 +469,8 @@ def test_ensure_tls_certificate_and_ssl_context(tmp_path) -> None:
 
 
 def test_web_server_https_tls_enabled(tmp_path) -> None:
-    """Verify DoormanWebServer serves HTTPS when tls_enabled=True (#68)."""
+    """Verify DoormanWebServer serves HTTPS when tls_enabled=True and is not blocked by idle preconnect sockets (#68)."""
+    import socket
     import ssl
 
     env_file = tmp_path / "tls_test.env"
@@ -490,25 +491,32 @@ def test_web_server_https_tls_enabled(tmp_path) -> None:
     assert server.scheme == "https"
     server.start()
 
+    idle_sock = None
     try:
         assert cert_file.is_file()
         assert key_file.is_file()
-        base_url = f"https://127.0.0.1:{server._server.server_port}"
+        port = server._server.server_port
+        base_url = f"https://127.0.0.1:{port}"
+
+        # Simulate browser speculative TCP preconnect that never sends TLS ClientHello
+        idle_sock = socket.create_connection(("127.0.0.1", port), timeout=2.0)
 
         unverified_ctx = ssl.create_default_context()
         unverified_ctx.check_hostname = False
         unverified_ctx.verify_mode = ssl.CERT_NONE
 
-        with urlopen(f"{base_url}/api/status", context=unverified_ctx) as res:
+        with urlopen(f"{base_url}/api/status", context=unverified_ctx, timeout=5.0) as res:
             assert res.status == 200
             data = json.loads(res.read().decode("utf-8"))
             assert data["tls_enabled"] is True
             assert "version" in data
 
-        with urlopen(f"{base_url}/", context=unverified_ctx) as res:
+        with urlopen(f"{base_url}/", context=unverified_ctx, timeout=5.0) as res:
             assert res.status == 200
             html = res.read().decode("utf-8")
             assert "Snippen Doorman Gateway" in html
             assert 'id="sys-tls"' in html
     finally:
+        if idle_sock is not None:
+            idle_sock.close()
         server.stop()

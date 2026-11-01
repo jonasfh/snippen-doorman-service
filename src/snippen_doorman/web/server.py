@@ -35,11 +35,26 @@ logger = logging.getLogger(__name__)
 
 
 class _QuietThreadingHTTPServer(ThreadingHTTPServer):
-    """ThreadingHTTPServer that suppresses noisy client disconnect and TLS handshake tracebacks."""
+    """ThreadingHTTPServer that performs TLS handshakes on worker threads and suppresses disconnect noise."""
+
+    daemon_threads = True
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            request.settimeout(10.0)
+            if isinstance(request, ssl.SSLSocket):
+                request.do_handshake()
+        except (ssl.SSLError, OSError, TimeoutError) as exc:
+            logger.debug("TLS handshake / connection aborted from %s: %s", client_address, exc)
+            self.shutdown_request(request)
+            return
+        super().process_request_thread(request, client_address)
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         exc = sys.exc_info()[1]
-        if isinstance(exc, (ssl.SSLError, ConnectionResetError, BrokenPipeError, TimeoutError)):
+        if isinstance(
+            exc, (ssl.SSLError, ConnectionResetError, BrokenPipeError, TimeoutError, OSError)
+        ):
             logger.debug("Client connection error from %s: %s", client_address, exc)
             return
         super().handle_error(request, client_address)
@@ -598,7 +613,11 @@ class DoormanWebServer:
                 extra_hosts=[self.host],
             )
             ssl_ctx = create_ssl_context(cert_file, key_file)
-            self._server.socket = ssl_ctx.wrap_socket(self._server.socket, server_side=True)
+            self._server.socket = ssl_ctx.wrap_socket(
+                self._server.socket,
+                server_side=True,
+                do_handshake_on_connect=False,
+            )
 
         self._thread = threading.Thread(
             target=self._server.serve_forever, daemon=True, name="doorman-web-server"
