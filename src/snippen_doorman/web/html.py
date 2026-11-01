@@ -114,6 +114,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     <nav>
       <button class="nav-btn active" onclick="showTab('status', this)">📊 Oversikt & Test</button>
+      <button class="nav-btn" onclick="showTab('db', this)">🗄️ Reservasjoner & Låsstatus</button>
       <button class="nav-btn" onclick="showTab('locks', this)">🔐 Dørlåser</button>
       <button class="nav-btn" onclick="showTab('api', this)">🌐 Booking API</button>
       <button class="nav-btn" onclick="showTab('ble', this)">📡 BLE WiFi Oppsett</button>
@@ -261,12 +262,105 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- TAB 5: RESERVASJONER & LÅSSTATUS (DATABASE) -->
+    <div id="tab-db" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <span>🗄️ Database & Provisjoneringsstatus på Raspberry Pi</span>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="loadDatabaseOverview()">🔄 Oppdater</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="triggerSync()">⚡ Synkroniser nå</button>
+          </div>
+        </div>
+        <div class="grid-2" style="margin-bottom: 0;">
+          <div>
+            <div class="stat-row"><span class="stat-label">Programmert i låsene nå (PROVISIONED):</span><span class="stat-val" id="db-summary-provisioned">0</span></div>
+            <div class="stat-row"><span class="stat-label">Planlagt / venter på JIT-tidsvindu (SCHEDULED):</span><span class="stat-val" id="db-summary-scheduled">0</span></div>
+            <div class="stat-row"><span class="stat-label">Venter på oppdatering/sletting (PENDING):</span><span class="stat-val" id="db-summary-pending">0</span></div>
+          </div>
+          <div>
+            <div class="stat-row"><span class="stat-label">Ledige gjestespor på tastatur:</span><span class="stat-val" id="db-summary-slots">-</span></div>
+            <div class="stat-row"><span class="stat-label">Aktive bookinger fra WordPress:</span><span class="stat-val" id="db-summary-reservations">0</span></div>
+            <div class="stat-row"><span class="stat-label">Historikk (Utløpt / Tilbakekalt):</span><span class="stat-val" id="db-summary-history">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Keypad Slot Map -->
+      <div class="card">
+        <div class="card-title">
+          <span>🔢 Gjestespor i dørlåsene (Tastatur-slots)</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 400;">Spor 0–2 er skjermet for Yale Home admin</span>
+        </div>
+        <div id="db-slots-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap: 0.75rem;"></div>
+      </div>
+
+      <!-- PIN Provisioning Queue Table -->
+      <div class="card">
+        <div class="card-title" style="flex-wrap: wrap; gap: 0.75rem;">
+          <span>🔑 PIN-koder & Lås-provisjonering (Pi-database)</span>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button type="button" id="btn-filter-active" class="btn btn-primary btn-sm" onclick="setDbFilter('active')">Aktive & Kommende</button>
+            <button type="button" id="btn-filter-all" class="btn btn-secondary btn-sm" onclick="setDbFilter('all')">Vis alle (inkl. historikk)</button>
+            <button type="button" id="btn-toggle-pins" class="btn btn-secondary btn-sm" onclick="togglePinVisibility()">👁️ Vis PIN-koder</button>
+          </div>
+        </div>
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--card-border); color: var(--text-muted);">
+                <th style="padding: 0.6rem 0.5rem;">Booking</th>
+                <th style="padding: 0.6rem 0.5rem;">Dør / Lås</th>
+                <th style="padding: 0.6rem 0.5rem;">Status i lås</th>
+                <th style="padding: 0.6rem 0.5rem;">Spor</th>
+                <th style="padding: 0.6rem 0.5rem;">PIN</th>
+                <th style="padding: 0.6rem 0.5rem;">Gyldig (Fra → Til)</th>
+                <th style="padding: 0.6rem 0.5rem;">JIT-aktivering</th>
+                <th style="padding: 0.6rem 0.5rem;">Sist endret</th>
+              </tr>
+            </thead>
+            <tbody id="db-pins-tbody">
+              <tr><td colspan="8" style="padding: 1rem; color: var(--text-muted); text-align: center;">Laster databaseoversikt...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Synced Reservations from WordPress -->
+      <div class="card">
+        <div class="card-title">
+          <span>📥 Synkroniserte reservasjoner fra WordPress Booking API</span>
+        </div>
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--card-border); color: var(--text-muted);">
+                <th style="padding: 0.6rem 0.5rem;">Booking-ID</th>
+                <th style="padding: 0.6rem 0.5rem;">Lås-ID</th>
+                <th style="padding: 0.6rem 0.5rem;">Status</th>
+                <th style="padding: 0.6rem 0.5rem;">PIN</th>
+                <th style="padding: 0.6rem 0.5rem;">Starttid</th>
+                <th style="padding: 0.6rem 0.5rem;">Sluttid</th>
+                <th style="padding: 0.6rem 0.5rem;">Sist sett ved poll</th>
+              </tr>
+            </thead>
+            <tbody id="db-reservations-tbody">
+              <tr><td colspan="7" style="padding: 1rem; color: var(--text-muted); text-align: center;">Ingen synkroniserte reservasjoner funnet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <div id="toast" class="toast">Varselmelding</div>
 
   <script>
     let currentConfig = null;
+    let cachedDbOverview = null;
+    let dbFilterMode = 'active';
+    let showPlainPins = false;
 
     function showTab(name, btn) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -280,6 +374,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         if (found) found.classList.add('active');
       }
       if (name === 'locks' || name === 'api') loadConfig();
+      if (name === 'db') loadDatabaseOverview();
     }
 
     function showToast(msg, type = 'info') {
@@ -667,8 +762,149 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const data = await res.json();
         showToast(`Synk fullført: ${data.added || 0} nye, ${data.activated || 0} aktivert`, 'success');
         loadStatus();
+        loadDatabaseOverview();
       } catch (err) {
         showToast('Synk-feil: ' + err.message, 'error');
+      }
+    }
+
+    function formatShortIso(isoStr) {
+      if (!isoStr) return '-';
+      try {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr;
+        return d.toLocaleString('no-NO', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } catch (_) {
+        return isoStr;
+      }
+    }
+
+    function renderPinStatusBadge(status) {
+      const s = (status || '').toUpperCase();
+      if (s === 'PROVISIONED') return '<span class="badge badge-green">I lås (PROVISIONED)</span>';
+      if (s === 'SCHEDULED') return '<span class="badge badge-blue">Planlagt (JIT)</span>';
+      if (s === 'PENDING_UPDATE' || s === 'PENDING_REVOKE') return `<span class="badge badge-yellow">${s}</span>`;
+      if (s === 'REVOKED') return '<span class="badge badge-red">Tilbakekalt</span>';
+      return `<span class="badge" style="background: rgba(148,163,184,0.2); color: #94a3b8;">${s || 'UKJENT'}</span>`;
+    }
+
+    function setDbFilter(mode) {
+      dbFilterMode = mode;
+      const btnActive = document.getElementById('btn-filter-active');
+      const btnAll = document.getElementById('btn-filter-all');
+      if (btnActive && btnAll) {
+        btnActive.className = mode === 'active' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+        btnAll.className = mode === 'all' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+      }
+      if (cachedDbOverview) renderDatabaseOverview(cachedDbOverview);
+    }
+
+    function togglePinVisibility() {
+      showPlainPins = !showPlainPins;
+      const btn = document.getElementById('btn-toggle-pins');
+      if (btn) {
+        btn.textContent = showPlainPins ? '🙈 Skjul PIN-koder' : '👁️ Vis PIN-koder';
+      }
+      if (cachedDbOverview) renderDatabaseOverview(cachedDbOverview);
+    }
+
+    function renderDatabaseOverview(data) {
+      if (!data) return;
+      const sum = data.summary || {};
+      document.getElementById('db-summary-provisioned').textContent = sum.provisioned_count ?? 0;
+      document.getElementById('db-summary-scheduled').textContent = sum.scheduled_count ?? 0;
+      document.getElementById('db-summary-pending').textContent = sum.pending_count ?? 0;
+      document.getElementById('db-summary-slots').textContent =
+        sum.slots_total != null ? `${sum.slots_free} av ${sum.slots_total} ledig (spor ${sum.slots_min}–${sum.slots_max})` : '-';
+      document.getElementById('db-summary-reservations').textContent =
+        `${sum.reservations_active ?? 0} aktive (${sum.reservations_total ?? 0} totalt)`;
+      document.getElementById('db-summary-history').textContent = sum.history_count ?? 0;
+
+      // Render slots grid
+      const slotsGrid = document.getElementById('db-slots-grid');
+      if (slotsGrid) {
+        const slots = data.slots || [];
+        slotsGrid.innerHTML = slots.map(s => {
+          const borderColor = s.occupied ? 'rgba(16, 185, 129, 0.5)' : 'var(--card-border)';
+          const bg = s.occupied ? 'rgba(16, 185, 129, 0.08)' : 'rgba(0,0,0,0.25)';
+          return `
+            <div style="background: ${bg}; border: 1px solid ${borderColor}; border-radius: 8px; padding: 0.75rem; text-align: center;">
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">Tastaturspor #${s.slot}</div>
+              <div style="margin-bottom: 0.35rem;">
+                ${s.occupied
+                  ? `<span class="badge badge-green">Booking #${s.booking_id}</span>`
+                  : '<span class="badge" style="background: rgba(148,163,184,0.15); color: #94a3b8;">Ledig</span>'}
+              </div>
+              <div style="font-size: 0.72rem; color: var(--text-muted);">
+                ${s.occupied ? `${s.lock_label || ('Lås ' + s.lock_id)}<br>Til: ${formatShortIso(s.valid_to)}` : 'Klar til bruk'}
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // Render pins table
+      const pinsTbody = document.getElementById('db-pins-tbody');
+      if (pinsTbody) {
+        let pins = data.pins || [];
+        if (dbFilterMode === 'active') {
+          pins = pins.filter(p => !['EXPIRED', 'REVOKED'].includes((p.status || '').toUpperCase()));
+        }
+        if (!pins.length) {
+          pinsTbody.innerHTML = '<tr><td colspan="8" style="padding: 1rem; color: var(--text-muted); text-align: center;">Ingen PIN-reservasjoner for valgt filter.</td></tr>';
+        } else {
+          pinsTbody.innerHTML = pins.map(p => `
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+              <td style="padding: 0.6rem 0.5rem; font-weight: 700;">#${p.booking_id}</td>
+              <td style="padding: 0.6rem 0.5rem;">${p.lock_label || p.lock_id || '-'}</td>
+              <td style="padding: 0.6rem 0.5rem;">${renderPinStatusBadge(p.status)}</td>
+              <td style="padding: 0.6rem 0.5rem; font-weight: 600;">${p.slot != null ? 'Spor ' + p.slot : '-'}</td>
+              <td style="padding: 0.6rem 0.5rem; font-family: monospace; font-weight: 700;">${showPlainPins ? (p.pin || '-') : (p.pin_masked || '••••••')}</td>
+              <td style="padding: 0.6rem 0.5rem;">${formatShortIso(p.valid_from)} → ${formatShortIso(p.valid_to)}</td>
+              <td style="padding: 0.6rem 0.5rem; color: var(--text-muted);">${formatShortIso(p.activation_time)}</td>
+              <td style="padding: 0.6rem 0.5rem; color: var(--text-muted);">${formatShortIso(p.modified_at)}</td>
+            </tr>
+          `).join('');
+        }
+      }
+
+      // Render synced WordPress reservations table
+      const resTbody = document.getElementById('db-reservations-tbody');
+      if (resTbody) {
+        const reservations = data.reservations || [];
+        if (!reservations.length) {
+          resTbody.innerHTML = '<tr><td colspan="7" style="padding: 1rem; color: var(--text-muted); text-align: center;">Ingen synkroniserte reservasjoner i databasen.</td></tr>';
+        } else {
+          resTbody.innerHTML = reservations.map(r => `
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+              <td style="padding: 0.6rem 0.5rem; font-weight: 700;">#${r.booking_id}</td>
+              <td style="padding: 0.6rem 0.5rem;">${r.lock_id != null ? r.lock_id : 'Alle / Standard'}</td>
+              <td style="padding: 0.6rem 0.5rem;"><span class="badge ${r.status === 'ACTIVE' ? 'badge-green' : 'badge-yellow'}">${r.status}</span></td>
+              <td style="padding: 0.6rem 0.5rem; font-family: monospace;">${showPlainPins ? (r.pin || '-') : (r.pin_masked || '-')}</td>
+              <td style="padding: 0.6rem 0.5rem;">${formatShortIso(r.valid_from)}</td>
+              <td style="padding: 0.6rem 0.5rem;">${formatShortIso(r.valid_to)}</td>
+              <td style="padding: 0.6rem 0.5rem; color: var(--text-muted);">${formatShortIso(r.last_seen_at)}</td>
+            </tr>
+          `).join('');
+        }
+      }
+    }
+
+    async function loadDatabaseOverview() {
+      try {
+        const res = await fetch('/api/database/overview');
+        if (!res.ok) return;
+        const data = await res.json();
+        cachedDbOverview = data;
+        renderDatabaseOverview(data);
+      } catch (err) {
+        console.error('Failed to load database overview:', err);
       }
     }
 

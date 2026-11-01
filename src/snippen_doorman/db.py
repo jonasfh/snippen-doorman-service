@@ -36,6 +36,11 @@ class LockStatusRecord:
     created_at: datetime | None = None
     modified_at: datetime | None = None
 
+    @property
+    def last_seen(self) -> datetime | None:
+        """Return timestamp of the latest recorded status update."""
+        return self.modified_at or self.created_at
+
 
 @dataclass
 class PinRecord:
@@ -228,6 +233,23 @@ class Database:
             created_at=_parse_datetime(row["created_at"]),
             modified_at=_parse_datetime(row["modified_at"]),
         )
+
+    def list_lock_statuses(self) -> list[LockStatusRecord]:
+        """List all recorded lock telemetry rows ordered by lock_address."""
+        with self._lock:
+            cursor = self._conn.execute("SELECT * FROM lock_status ORDER BY lock_address ASC")
+            rows = cursor.fetchall()
+        return [
+            LockStatusRecord(
+                lock_address=row["lock_address"],
+                lock_status=row["lock_status"],
+                door_status=row["door_status"],
+                battery=row["battery"],
+                created_at=_parse_datetime(row["created_at"]),
+                modified_at=_parse_datetime(row["modified_at"]),
+            )
+            for row in rows
+        ]
 
     def create_pin(
         self,

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-11-01
+
+### Added
+- Database & Lock Provisioning Overview tab (`🗄️ Reservasjoner & Låsstatus`) in the Web Dashboard (`src/snippen_doorman/web/html.py`) displaying keypad guest slot occupancy (slots 3–9), PIN provisioning status (`PROVISIONED`, `SCHEDULED`, `PENDING_*`, `EXPIRED`, `REVOKED`), JIT activation timestamps, PIN masking/reveal toggle, and synced WordPress reservations (#69).
+- Backend endpoint `GET /api/database/overview` in `DoormanWebServer` (`src/snippen_doorman/web/server.py`) returning aggregated counts, slot allocation map, PIN records, synced `ReservationStore` bookings, and lock telemetry (#69).
+- `Database.list_lock_statuses()` and `LockStatusRecord.last_seen` property in `src/snippen_doorman/db.py` (#69).
+
 ## [0.17.2] - 2026-11-01
 
 ### Fixed

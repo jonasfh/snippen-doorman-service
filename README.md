@@ -200,6 +200,7 @@ snippen-doorman service run --web
 
 Access the dashboard at `https://snippen-doorman-service.local:8080` (or `https://<pi-ip>:8080`) to:
 - Monitor live gateway telemetry, battery health, and door/lock states.
+- Inspect local SQLite database contents (`GET /api/database/overview`), including upcoming/active PIN reservations, JIT activation times, keypad guest slot occupancy (slots 3–9), and synced WordPress bookings (#69).
 - Test unlock and inspect live synchronization logs.
 - Configure Yale Doorman locks, offline keys, and WordPress Booking API credentials.
 - Provision WiFi over Bluetooth Low Energy via the companion PWA at `https://<pi-ip>:8080/web-config` (unauthenticated for direct mobile onboarding; HTTPS satisfies Chrome's Secure Context requirement for Web Bluetooth).
