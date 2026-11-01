@@ -12,7 +12,7 @@ from pathlib import Path
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 logger = logging.getLogger(__name__)
@@ -30,44 +30,77 @@ def _detect_local_ip() -> str:
         s.close()
 
 
+def _is_certificate_compatible(cert_file: Path, key_file: Path) -> bool:
+    """Check whether an existing certificate/key pair is valid and browser-compatible.
+
+    Returns False if files are missing, unreadable, expired (or expiring within 7 days),
+    use an incompatible key type/KeyUsage combination, or have BasicConstraints(ca=True).
+    """
+    if not (cert_file.is_file() and key_file.is_file()):
+        return False
+    try:
+        if cert_file.stat().st_size == 0 or key_file.stat().st_size == 0:
+            return False
+        cert = x509.load_pem_x509_certificate(cert_file.read_bytes())
+        if not isinstance(cert.public_key(), rsa.RSAPublicKey):
+            logger.info(
+                "Existing TLS certificate at %s uses non-RSA key; regenerating for browser compatibility.",
+                cert_file,
+            )
+            return False
+        bc_ext = cert.extensions.get_extension_for_class(x509.BasicConstraints)
+        if bc_ext.value.ca:
+            logger.info(
+                "Existing TLS certificate at %s has ca=True; regenerating as leaf server certificate.",
+                cert_file,
+            )
+            return False
+        if cert.not_valid_after_utc <= datetime.now(UTC) + timedelta(days=7):
+            logger.info("Existing TLS certificate at %s is expiring soon; regenerating.", cert_file)
+            return False
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not validate existing TLS certificate at %s: %s", cert_file, exc)
+        return False
+
+
 def ensure_tls_certificate(
     cert_path: str | Path = "data/tls/cert.pem",
     key_path: str | Path = "data/tls/key.pem",
     extra_hosts: list[str] | None = None,
-    validity_days: int = 3650,
+    validity_days: int = 397,
 ) -> tuple[Path, Path]:
-    """Ensure a TLS certificate and private key exist on disk, generating a self-signed pair if missing.
+    """Ensure a browser-compatible TLS certificate and private key exist on disk.
+
+    Generates a 2048-bit RSA self-signed leaf certificate (ca=False, validity <= 397 days)
+    compliant with Chrome (BoringSSL) and Safari/macOS TLS requirements so browsers
+    allow proceeding past the self-signed warning without manual certificate import.
 
     Args:
         cert_path: Target path for the PEM-encoded X.509 certificate.
         key_path: Target path for the PEM-encoded private key.
         extra_hosts: Optional list of additional DNS names or IP addresses to include in SAN.
-        validity_days: Validity duration in days for newly generated certificates (default: 3650).
+        validity_days: Validity duration in days (default: 397 to satisfy browser leaf limits).
 
     Returns:
-        Tuple of (cert_file_path, key_file_path) as resolved Path objects.
+        Tuple of (cert_file_path, key_file_path) as Path objects.
     """
     cert_file = Path(cert_path)
     key_file = Path(key_path)
 
-    if (
-        cert_file.is_file()
-        and key_file.is_file()
-        and cert_file.stat().st_size > 0
-        and key_file.stat().st_size > 0
-    ):
+    if _is_certificate_compatible(cert_file, key_file):
         return cert_file, key_file
 
     cert_file.parent.mkdir(parents=True, exist_ok=True)
     key_file.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "Generating self-signed TLS certificate at %s (key: %s)...",
+        "Generating self-signed RSA-2048 TLS certificate at %s (key: %s)...",
         cert_file,
         key_file,
     )
 
-    private_key = ec.generate_private_key(ec.SECP256R1())
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     hostname = socket.gethostname() or "snippen-doorman-service"
     subject = issuer = x509.Name(
@@ -113,16 +146,24 @@ def ensure_tls_certificate(
     ]
 
     now = datetime.now(UTC)
+    public_key = private_key.public_key()
+    ski = x509.SubjectKeyIdentifier.from_public_key(public_key)
+
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
         .issuer_name(issuer)
-        .public_key(private_key.public_key())
+        .public_key(public_key)
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(hours=1))
         .not_valid_after(now + timedelta(days=validity_days))
         .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
-        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(ski, critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski),
+            critical=False,
+        )
         .add_extension(
             x509.KeyUsage(
                 digital_signature=True,
@@ -130,7 +171,7 @@ def ensure_tls_certificate(
                 key_encipherment=True,
                 data_encipherment=False,
                 key_agreement=False,
-                key_cert_sign=True,
+                key_cert_sign=False,
                 crl_sign=False,
                 encipher_only=False,
                 decipher_only=False,

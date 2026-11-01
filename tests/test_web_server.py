@@ -432,8 +432,14 @@ def test_ensure_tls_certificate_and_ssl_context(tmp_path) -> None:
     key_mode = stat.S_IMODE(k_path.stat().st_mode)
     assert key_mode == 0o600
 
-    # Parse generated certificate and verify SANs
+    # Parse generated certificate and verify SANs and browser compatibility (RSA-2048, ca=False)
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
     cert = x509.load_pem_x509_certificate(c_path.read_bytes())
+    assert isinstance(cert.public_key(), rsa.RSAPublicKey)
+    bc_ext = cert.extensions.get_extension_for_class(x509.BasicConstraints)
+    assert bc_ext.value.ca is False
+
     san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
     dns_names = san_ext.value.get_values_for_type(x509.DNSName)
     ip_addrs = san_ext.value.get_values_for_type(x509.IPAddress)
@@ -444,12 +450,18 @@ def test_ensure_tls_certificate_and_ssl_context(tmp_path) -> None:
     assert ipaddress.ip_address("127.0.0.1") in ip_addrs
     assert ipaddress.ip_address("192.168.10.42") in ip_addrs
 
-    # Verify idempotence (existing files are reused without overwriting)
+    # Verify idempotence (existing compliant files are reused without overwriting)
     first_mtime = c_path.stat().st_mtime_ns
     first_bytes = c_path.read_bytes()
     c_path2, _ = ensure_tls_certificate(cert_path=cert_file, key_path=key_file)
     assert c_path2.read_bytes() == first_bytes
     assert c_path2.stat().st_mtime_ns == first_mtime
+
+    # Verify automatic regeneration if an incompatible (e.g. corrupt/empty) cert exists
+    cert_file.write_text("invalid-cert-content", encoding="utf-8")
+    c_path3, _ = ensure_tls_certificate(cert_path=cert_file, key_path=key_file)
+    regenerated_cert = x509.load_pem_x509_certificate(c_path3.read_bytes())
+    assert isinstance(regenerated_cert.public_key(), rsa.RSAPublicKey)
 
     # Verify SSLContext loads certificate and key cleanly
     ctx = create_ssl_context(c_path, k_path)

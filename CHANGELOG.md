@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.1] - 2026-11-01
+
+### Fixed
+- Switched self-signed TLS certificate generation in `src/snippen_doorman/web/tls.py` to RSA-2048 leaf server certificates (`BasicConstraints(ca=False)`, 397-day validity, and compatible `KeyUsage` flags) and added automatic startup regeneration of older/incompatible certificates, resolving Chrome (`ERR_SSL_KEY_USAGE_INCOMPATIBLE`) and Safari self-signed certificate rejection (#68).
+- Updated `scripts/install_pi.sh` to install `--upgrade` directly from the source repository when no wheel path is passed, avoiding stale wheels in `dist/` (#68).
+
 ## [0.17.0] - 2026-10-31
 
 ### Added
