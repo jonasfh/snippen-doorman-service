@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.2] - 2026-11-01
+
+### Fixed
+- Prevented browser speculative TCP preconnect sockets from blocking `DoormanWebServer`'s main accept loop when HTTPS is enabled by setting `do_handshake_on_connect=False` and performing TLS handshakes with a 10-second socket timeout inside per-connection worker threads (#68).
+
 ## [0.17.1] - 2026-11-01
 
 ### Fixed
