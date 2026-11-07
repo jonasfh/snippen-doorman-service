@@ -862,6 +862,9 @@ async def test_sync_engine_pushes_full_status_to_booking(sync_env):
 
     assert result.full_status is not None
     assert result.full_status["expired_window_days"] == 7
+    assert "service_id" in result.full_status
+    assert "service" in result.full_status
+    assert result.full_status["service"]["id"] == result.full_status["service_id"]
     assert "reservations_in_db" in result.full_status
     assert "locks" in result.full_status
     assert "provisioned_on_locks" in result.full_status
@@ -870,6 +873,8 @@ async def test_sync_engine_pushes_full_status_to_booking(sync_env):
     assert booking_client.push_door_status.called
     pushed_payload = booking_client.push_door_status.call_args[0][0]
     assert pushed_payload == result.full_status
+    assert pushed_payload["service_id"] == result.full_status["service_id"]
+    assert pushed_payload["service"]["id"] == result.full_status["service_id"]
     assert pushed_payload["reservations_in_db"][0]["booking_id"] == "b_status_1"
     assert pushed_payload["reservations_in_db"][0]["pin"] == "987654"
     assert pushed_payload["reservations_in_db"][0]["all_locks_provisioned"] is True
@@ -909,3 +914,33 @@ async def test_sync_engine_manual_door_code_update_propagates_to_locks(sync_env)
     assert "b_manual_update" in res2.provision.updated
     assert fake_client.pins[9] == "222222"
     assert res2.full_status["reservations_in_db"][0]["pin"] == "222222"
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_custom_service_identity(sync_env):
+    """Test configuring DoormanSyncEngine with custom service_id and service_name (#76)."""
+    now = datetime(2026, 11, 7, 14, 0, tzinfo=UTC)
+    poller = sync_env["poller"]
+    provisioner = sync_env["provisioner"]
+    store = sync_env["store"]
+    db = sync_env["db"]
+
+    engine = DoormanSyncEngine(
+        poller=poller,
+        provisioner=provisioner,
+        store=store,
+        db=db,
+        service_id="hybel-vest-node",
+        service_name="Hybel Vest (Sokkelleilighet)",
+        lock_ids=["2"],
+    )
+
+    assert engine.node_identity.service_id == "hybel-vest-node"
+    assert engine.node_identity.service_name == "Hybel Vest (Sokkelleilighet)"
+    assert engine.node_identity.lock_ids == ["2"]
+
+    res = await engine.sync_once(now=now)
+    assert res.full_status["service_id"] == "hybel-vest-node"
+    assert res.full_status["service"]["id"] == "hybel-vest-node"
+    assert res.full_status["service"]["name"] == "Hybel Vest (Sokkelleilighet)"
+    assert res.full_status["service"]["lock_ids"] == ["2"]

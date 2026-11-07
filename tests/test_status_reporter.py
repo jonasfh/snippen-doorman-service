@@ -143,6 +143,13 @@ def test_build_full_status_payload_multi_lock_and_history():
 
     assert payload["generated_at"] == now.isoformat()
     assert payload["expired_window_days"] == 7
+    assert "service_id" in payload
+    assert payload["service"]["id"] == payload["service_id"]
+    assert "version" in payload["service"]
+    assert "hostname" in payload["service"]
+    assert "ip_address" in payload["service"]
+    assert "mac_address" in payload["service"]
+    assert payload["service"]["lock_ids"] == ["1"]
 
     # Check locks
     assert len(payload["locks"]) == 2
@@ -187,5 +194,27 @@ def test_build_full_status_payload_multi_lock_and_history():
     assert exp[0]["booking_id"] == "98"
     assert exp[0]["status"] == "EXPIRED"
     assert len(exp[0]["physical_locks"]) >= 1
+
+    db.close()
+
+
+def test_build_full_status_payload_with_explicit_service_identity():
+    db = Database(":memory:")
+    now = datetime(2026, 11, 7, 14, 30, tzinfo=UTC)
+
+    payload = build_full_status_payload(
+        db=db,
+        service_id="grendehus-node",
+        service_name="Grendehuset (Hovedbygg)",
+        now=now,
+    )
+
+    assert payload["service_id"] == "grendehus-node"
+    assert payload["service"]["id"] == "grendehus-node"
+    assert payload["service"]["name"] == "Grendehuset (Hovedbygg)"
+    assert payload["service"]["version"] == "0.20.0"
+    assert "hostname" in payload["service"]
+    assert "ip_address" in payload["service"]
+    assert "mac_address" in payload["service"]
 
     db.close()

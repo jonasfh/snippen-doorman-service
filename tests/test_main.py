@@ -496,3 +496,43 @@ def test_web_subcommand_parser() -> None:
     assert srv_args.web_tls is True
     assert srv_args.tls_cert == "srv/cert.pem"
     assert srv_args.tls_key == "srv/key.pem"
+
+
+def test_service_subcommand_service_identity_args(capsys) -> None:
+    """Test service arguments for service-id and service-name (#76)."""
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "service",
+            "status",
+            "--service-id",
+            "grendehus-node",
+            "--service-name",
+            "Grendehuset (Hovedbygg)",
+            "--storage",
+            "memory",
+        ]
+    )
+    assert args.subcommand == "service"
+    assert args.service_subcommand == "status"
+    assert args.service_id == "grendehus-node"
+    assert args.service_name == "Grendehuset (Hovedbygg)"
+
+    main_cli(
+        [
+            "service",
+            "status",
+            "--service-id",
+            "grendehus-node",
+            "--service-name",
+            "Grendehuset (Hovedbygg)",
+            "--storage",
+            "memory",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert "--- Snippen Doorman Status ---" in captured.out
+    assert "Service ID:              grendehus-node" in captured.out
+    assert "Service Name:            Grendehuset (Hovedbygg)" in captured.out
+    assert "IP Address:" in captured.out
+    assert "MAC Address:" in captured.out

@@ -34,6 +34,8 @@ class DoormanConfig:
 
     api_url: str = "https://vestreholmensameie.no/wp-json/snippen/v1/door"
     api_token: str = ""
+    service_id: str | None = None
+    service_name: str | None = None
     locks: list[LockSetting] = field(default_factory=list)
     lead_time_minutes: int = 60
     grace_period_minutes: int = 15
@@ -84,6 +86,10 @@ class ConfigManager:
             "SNIPPEN_DOORMAN_API_URL", "https://vestreholmensameie.no/wp-json/snippen/v1/door"
         )
         api_token = get_val("SNIPPEN_DOORMAN_API_TOKEN", "")
+        service_id_raw = get_val("SNIPPEN_DOORMAN_SERVICE_ID", "")
+        service_id = service_id_raw.strip() if service_id_raw.strip() else None
+        service_name_raw = get_val("SNIPPEN_DOORMAN_SERVICE_NAME", "")
+        service_name = service_name_raw.strip() if service_name_raw.strip() else None
 
         try:
             lead_time = int(get_val("SNIPPEN_LEAD_TIME_MINUTES", "60"))
@@ -172,6 +178,8 @@ class ConfigManager:
         return DoormanConfig(
             api_url=api_url,
             api_token=api_token,
+            service_id=service_id,
+            service_name=service_name,
             locks=locks,
             lead_time_minutes=lead_time,
             grace_period_minutes=grace_period,
@@ -190,6 +198,8 @@ class ConfigManager:
             "api_url": cfg.api_url,
             "api_token_configured": bool(cfg.api_token),
             "api_token_masked": mask_secret(cfg.api_token),
+            "service_id": cfg.service_id,
+            "service_name": cfg.service_name,
             "lead_time_minutes": cfg.lead_time_minutes,
             "grace_period_minutes": cfg.grace_period_minutes,
             "sync_interval_seconds": cfg.sync_interval_seconds,
@@ -239,6 +249,13 @@ class ConfigManager:
             # Only update if user didn't send a masked placeholder or empty value
             if token and "••••" not in token:
                 new_env_entries["SNIPPEN_DOORMAN_API_TOKEN"] = token
+
+        # Service Identity (issue #76)
+        if "service_id" in updates:
+            new_env_entries["SNIPPEN_DOORMAN_SERVICE_ID"] = str(updates["service_id"]).strip()
+
+        if "service_name" in updates:
+            new_env_entries["SNIPPEN_DOORMAN_SERVICE_NAME"] = str(updates["service_name"]).strip()
 
         # Admin Password
         if "admin_password" in updates:

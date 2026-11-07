@@ -26,6 +26,7 @@ from snippen_doorman.booking_client import SnippenBookingClient
 from snippen_doorman.config_manager import ConfigManager
 from snippen_doorman.db import Database
 from snippen_doorman.gpio_button import GpioButtonHandler
+from snippen_doorman.node_identity import resolve_node_identity
 from snippen_doorman.state import ReservationStore, SqliteReservationStore
 from snippen_doorman.status_reporter import build_full_status_payload
 from snippen_doorman.sync import DoormanSyncEngine
@@ -151,8 +152,13 @@ class DoormanWebServer:
         return list(self._events)
 
     def get_full_status(self, expired_window_days: int = 7) -> dict[str, Any]:
-        """Build full JSON status payload matching issue #75."""
+        """Build full JSON status payload matching issue #75 and issue #76."""
         cfg = self.config_manager.load_config()
+        identity = resolve_node_identity(
+            service_id=cfg.service_id,
+            service_name=cfg.service_name,
+            lock_ids=[cfg_lk.lock_id for cfg_lk in cfg.locks if cfg_lk.lock_id is not None],
+        )
         return build_full_status_payload(
             db=self.db,
             store=self.store,
@@ -160,6 +166,7 @@ class DoormanWebServer:
             expired_window_days=expired_window_days,
             guest_slot_min=cfg.guest_slot_min,
             guest_slot_max=cfg.guest_slot_max,
+            node_identity=identity,
         )
 
     def get_database_overview(self) -> dict[str, Any]:
@@ -508,9 +515,13 @@ class DoormanWebServer:
                         parent.ble_peripheral.remaining_seconds if parent.ble_peripheral else 0
                     )
                     full_status = parent.get_full_status()
+                    svc_meta = full_status.get("service", {})
                     data = {
-                        "hostname": socket.gethostname(),
-                        "ip": wifi_status.get("ip") or get_local_ip(),
+                        "hostname": svc_meta.get("hostname", socket.gethostname()),
+                        "ip": wifi_status.get("ip") or svc_meta.get("ip_address", get_local_ip()),
+                        "service_id": full_status.get("service_id", svc_meta.get("id")),
+                        "service_name": svc_meta.get("name"),
+                        "mac_address": svc_meta.get("mac_address"),
                         "wifi_ssid": wifi_status.get("ssid"),
                         "uptime": uptime_str,
                         "version": __version__,
@@ -518,6 +529,7 @@ class DoormanWebServer:
                         "events": parent.get_events(),
                         "primary_lock": primary_lock_info,
                         "locks": all_locks_info,
+                        "service": svc_meta,
                         "locks_count": len(cfg.locks),
                         "ble_setup_active": ble_active,
                         "ble_setup_remaining_seconds": ble_remaining,

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from snippen_doorman.db import Database, PinStatus
+from snippen_doorman.node_identity import NodeIdentity, resolve_node_identity
 from snippen_doorman.state.base import ReservationStore
 
 
@@ -29,6 +30,9 @@ def build_full_status_payload(
     now: datetime | None = None,
     guest_slot_min: int = 3,
     guest_slot_max: int = 9,
+    service_id: str | None = None,
+    service_name: str | None = None,
+    node_identity: NodeIdentity | None = None,
 ) -> dict[str, Any]:
     """Build a comprehensive JSON status report of locks, DB reservations, and history.
 
@@ -41,9 +45,12 @@ def build_full_status_payload(
         now: Current timestamp (defaults to datetime.now(UTC)).
         guest_slot_min: First guest keypad slot (default: 3).
         guest_slot_max: Last guest keypad slot (default: 9).
+        service_id: Optional service ID override (issue #76).
+        service_name: Optional service display name override (issue #76).
+        node_identity: Optional pre-resolved NodeIdentity instance.
 
     Returns:
-        Structured dictionary matching the issue #75 API specification.
+        Structured dictionary matching issue #75 and issue #76 / snippen-booking #372.
     """
     if now is None:
         now = datetime.now(UTC)
@@ -326,7 +333,27 @@ def build_full_status_payload(
                 }
             )
 
+    discovered_lock_ids: list[str] = []
+    for lk in known_locks_map.values():
+        raw_lid = lk.get("lock_id")
+        if raw_lid is not None:
+            lid_str = str(raw_lid).strip()
+            if lid_str and lid_str not in discovered_lock_ids:
+                discovered_lock_ids.append(lid_str)
+
+    resolved_identity = node_identity
+    if resolved_identity is None:
+        resolved_identity = resolve_node_identity(
+            service_id=service_id,
+            service_name=service_name,
+            lock_ids=discovered_lock_ids,
+        )
+    elif not resolved_identity.lock_ids and discovered_lock_ids:
+        resolved_identity.lock_ids = discovered_lock_ids
+
     return {
+        "service_id": resolved_identity.service_id,
+        "service": resolved_identity.to_service_dict(),
         "generated_at": format_iso(now),
         "expired_window_days": expired_window_days,
         "locks": locks_data,

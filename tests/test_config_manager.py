@@ -105,3 +105,33 @@ def test_load_and_update_locks_with_lock_id(tmp_path) -> None:
     updated = mgr.load_config()
     assert len(updated.locks) == 1
     assert updated.locks[0].lock_id == 10
+
+
+def test_load_and_update_service_identity(tmp_path) -> None:
+    env_file = tmp_path / "service_identity.env"
+    env_file.write_text(
+        'SNIPPEN_DOORMAN_SERVICE_ID="grendehus-node"\n'
+        'SNIPPEN_DOORMAN_SERVICE_NAME="Grendehuset (Hovedbygg)"\n'
+    )
+    mgr = ConfigManager(env_file)
+    cfg = mgr.load_config()
+    assert cfg.service_id == "grendehus-node"
+    assert cfg.service_name == "Grendehuset (Hovedbygg)"
+
+    safe = mgr.to_safe_dict(cfg)
+    assert safe["service_id"] == "grendehus-node"
+    assert safe["service_name"] == "Grendehuset (Hovedbygg)"
+
+    # Update service identity
+    ok, errors = mgr.update_config(
+        {
+            "service_id": "anneks-node",
+            "service_name": "Anneks Doorman",
+        }
+    )
+    assert ok is True
+    assert errors == []
+
+    updated = mgr.load_config()
+    assert updated.service_id == "anneks-node"
+    assert updated.service_name == "Anneks Doorman"

@@ -18,6 +18,7 @@ from snippen_doorman.ble.lock_config import parse_lock_configs
 from snippen_doorman.ble.pin import YalePinError
 from snippen_doorman.booking_client import SnippenBookingClient
 from snippen_doorman.db import Database, PinStatus
+from snippen_doorman.node_identity import resolve_node_identity
 from snippen_doorman.poller import BookingPoller
 from snippen_doorman.provisioner import PinProvisioner, run_provisioning_scheduler
 from snippen_doorman.state import create_reservation_store
@@ -324,6 +325,8 @@ async def run_service_command(
     grace_period_minutes: int = 15,
     guest_slot_min: int = 3,
     guest_slot_max: int = 9,
+    service_id: str | None = None,
+    service_name: str | None = None,
     locks: str | None = None,
     lock_id: int | None = None,
     enable_web: bool = True,
@@ -379,6 +382,11 @@ async def run_service_command(
     )
     poller = BookingPoller(client=client, store=store, auto_generate_pin=auto_generate_pin)
     lock_ids = [cfg.lock_id for cfg in lock_configs if cfg.lock_id is not None]
+    node_identity = resolve_node_identity(
+        service_id=service_id,
+        service_name=service_name,
+        lock_ids=lock_ids if lock_ids else None,
+    )
     sync_engine = DoormanSyncEngine(
         poller=poller,
         provisioner=provisioner,
@@ -386,6 +394,7 @@ async def run_service_command(
         db=db,
         lock_ids=lock_ids if lock_ids else None,
         heartbeat_interval_hours=heartbeat_interval_hours,
+        node_identity=node_identity,
     )
 
     try:
@@ -398,13 +407,22 @@ async def run_service_command(
                 expired_window_days=7,
                 guest_slot_min=guest_slot_min,
                 guest_slot_max=guest_slot_max,
+                node_identity=node_identity,
             )
             if output_json:
                 import json
 
                 print(json.dumps(full_status, indent=2))
             else:
+                svc = full_status.get("service", {})
                 print("\n--- Snippen Doorman Status ---")
+                print(
+                    f"Service ID:              {svc.get('id', full_status.get('service_id', 'N/A'))}"
+                )
+                print(f"Service Name:            {svc.get('name', 'N/A')}")
+                print(f"IP Address:              {svc.get('ip_address', 'N/A')}")
+                print(f"MAC Address:             {svc.get('mac_address', 'N/A')}")
+                print(f"Hostname:                {svc.get('hostname', 'N/A')}")
                 print(f"Generated at:            {full_status['generated_at']}")
                 print(f"Locks:                   {len(full_status['locks'])}")
                 print(f"Reservations in DB:      {len(full_status['reservations_in_db'])}")
@@ -927,6 +945,16 @@ def build_parser() -> argparse.ArgumentParser:
             help="Single lock ID from WordPress Booking API (default: None)",
         )
         p.add_argument(
+            "--service-id",
+            default=os.getenv("SNIPPEN_DOORMAN_SERVICE_ID"),
+            help="Unique service identifier for this node (default: auto-detected)",
+        )
+        p.add_argument(
+            "--service-name",
+            default=os.getenv("SNIPPEN_DOORMAN_SERVICE_NAME"),
+            help="Human-readable service display name (e.g. 'Grendehuset (Hovedbygg)')",
+        )
+        p.add_argument(
             "--web",
             dest="enable_web",
             action="store_true",
@@ -1151,6 +1179,8 @@ def main_cli(argv: list[str] | None = None) -> None:
                     grace_period_minutes=getattr(args, "grace_period", 15),
                     guest_slot_min=getattr(args, "guest_slot_min", 3),
                     guest_slot_max=getattr(args, "guest_slot_max", 9),
+                    service_id=getattr(args, "service_id", None),
+                    service_name=getattr(args, "service_name", None),
                     locks=getattr(args, "locks", None),
                     lock_id=getattr(args, "lock_id", None),
                     enable_web=getattr(args, "enable_web", True),
