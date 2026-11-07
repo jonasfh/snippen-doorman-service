@@ -38,6 +38,7 @@ snippen-doorman-service/
 │       ├── mock_server.py    # Embedded mock HTTP server simulating WordPress door API
 │       ├── poller.py         # Polling reconciliation engine for Snippen Booking
 │       ├── provisioner.py    # JIT PIN provisioning engine and scheduler daemon
+│       ├── status_reporter.py # Full JSON status payload builder for Snippen Booking & CLI (#75)
 │       ├── sync.py           # Full sync engine connecting poller, storage, and provisioner
 │       ├── wifi_manager.py   # Linux NetworkManager integration for scanning & connecting WiFi
 │       ├── web/              # Embedded HTTP web server & responsive administrative dashboard
@@ -76,6 +77,7 @@ snippen-doorman-service/
 │   ├── test_pin.py           # PIN protocol and encoding tests
 │   ├── test_poller.py        # Poller reconciliation and diff tests
 │   ├── test_provisioner.py   # JIT provisioning engine tests
+│   ├── test_status_reporter.py # Full JSON status payload builder tests (#75)
 │   ├── test_storage.py       # Pluggable storage backend tests
 │   ├── test_sync.py          # Full sync engine tests
 │   ├── test_verify_door_sync.py # Tests for interactive verification script

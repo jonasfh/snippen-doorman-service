@@ -27,6 +27,7 @@ from snippen_doorman.config_manager import ConfigManager
 from snippen_doorman.db import Database
 from snippen_doorman.gpio_button import GpioButtonHandler
 from snippen_doorman.state import ReservationStore, SqliteReservationStore
+from snippen_doorman.status_reporter import build_full_status_payload
 from snippen_doorman.sync import DoormanSyncEngine
 from snippen_doorman.web.html import DASHBOARD_HTML
 from snippen_doorman.web.tls import create_ssl_context, ensure_tls_certificate
@@ -148,6 +149,18 @@ class DoormanWebServer:
     def get_events(self) -> list[dict[str, str]]:
         """Return a list of recent events."""
         return list(self._events)
+
+    def get_full_status(self, expired_window_days: int = 7) -> dict[str, Any]:
+        """Build full JSON status payload matching issue #75."""
+        cfg = self.config_manager.load_config()
+        return build_full_status_payload(
+            db=self.db,
+            store=self.store,
+            lock_configs=cfg.locks,
+            expired_window_days=expired_window_days,
+            guest_slot_min=cfg.guest_slot_min,
+            guest_slot_max=cfg.guest_slot_max,
+        )
 
     def get_database_overview(self) -> dict[str, Any]:
         """Build a complete snapshot of local database reservations, PIN schedules, and lock slots."""
@@ -430,7 +443,11 @@ class DoormanWebServer:
                     self._send_html(200, DASHBOARD_HTML)
                     return
 
-                if self.path == "/api/status":
+                if self.path == "/api/status/full" or self.path.startswith("/api/status/full?"):
+                    self._send_json(200, parent.get_full_status())
+                    return
+
+                if self.path == "/api/status" or self.path.startswith("/api/status?"):
                     cfg = parent.config_manager.load_config()
                     uptime_delta = datetime.now(UTC) - parent.start_time
                     hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
@@ -490,6 +507,7 @@ class DoormanWebServer:
                     ble_remaining = (
                         parent.ble_peripheral.remaining_seconds if parent.ble_peripheral else 0
                     )
+                    full_status = parent.get_full_status()
                     data = {
                         "hostname": socket.gethostname(),
                         "ip": wifi_status.get("ip") or get_local_ip(),
@@ -503,6 +521,12 @@ class DoormanWebServer:
                         "locks_count": len(cfg.locks),
                         "ble_setup_active": ble_active,
                         "ble_setup_remaining_seconds": ble_remaining,
+                        "generated_at": full_status["generated_at"],
+                        "expired_window_days": full_status["expired_window_days"],
+                        "reservations_in_db": full_status["reservations_in_db"],
+                        "provisioned_on_locks": full_status["provisioned_on_locks"],
+                        "recently_expired": full_status["recently_expired"],
+                        "full_status": full_status,
                     }
                     self._send_json(200, data)
                     return

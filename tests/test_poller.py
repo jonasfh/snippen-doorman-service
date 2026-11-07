@@ -203,3 +203,76 @@ def test_poll_preserves_state_on_network_failure(store, mock_client):
     assert persisted is not None
     assert persisted.status == ReservationStatus.ACTIVE
     assert persisted.pin == "123456"
+
+
+def test_poll_prioritizes_manual_door_code_and_does_not_patch(store, mock_client):
+    """When a booking in WordPress has a manual door_code, use it and do not send PATCH (#74)."""
+    now = datetime(2026, 11, 7, 12, 0, 0, tzinfo=UTC)
+    mock_client.fetch_bookings.return_value = [
+        RemoteBooking(
+            id="201",
+            start_time=now + timedelta(hours=1),
+            end_time=now + timedelta(hours=3),
+            door_code="654321",
+        )
+    ]
+
+    poller = BookingPoller(client=mock_client, store=store, auto_generate_pin=True)
+    res = poller.poll_once(now=now)
+
+    assert res.added == ["201"]
+    mock_client.update_booking_code.assert_not_called()
+
+    rec = store.get_reservation("201")
+    assert rec.pin == "654321"
+
+
+def test_poll_resyncs_existing_local_pin_when_remote_code_is_none(store, mock_client):
+    """When remote door_code is None but store already has a valid PIN, re-sync to WordPress (#74)."""
+    now = datetime(2026, 11, 7, 12, 0, 0, tzinfo=UTC)
+    rec = ReservationRecord(
+        booking_id="202",
+        valid_from=now + timedelta(hours=1),
+        valid_to=now + timedelta(hours=3),
+        pin="456789",
+        status=ReservationStatus.ACTIVE,
+    )
+    store.save_reservation(rec)
+
+    mock_client.fetch_bookings.return_value = [
+        RemoteBooking(
+            id="202",
+            start_time=rec.valid_from,
+            end_time=rec.valid_to,
+            door_code=None,  # missing on WordPress side
+        )
+    ]
+
+    poller = BookingPoller(client=mock_client, store=store, auto_generate_pin=True)
+    res = poller.poll_once(now=now)
+
+    assert res.unchanged == ["202"]
+    mock_client.update_booking_code.assert_called_once_with("202", "456789")
+
+
+def test_poll_handles_invalid_manual_door_code_gracefully(store, mock_client):
+    """When manual door code is invalid (e.g. not 4-6 digits), log error without crashing (#74)."""
+    now = datetime(2026, 11, 7, 12, 0, 0, tzinfo=UTC)
+    mock_client.fetch_bookings.return_value = [
+        RemoteBooking(
+            id="203",
+            start_time=now + timedelta(hours=1),
+            end_time=now + timedelta(hours=3),
+            door_code="12",  # invalid: too short
+        )
+    ]
+
+    poller = BookingPoller(client=mock_client, store=store, auto_generate_pin=False)
+    res = poller.poll_once(now=now)
+
+    assert res.added == ["203"]
+    assert len(res.errors) == 1
+    assert "Invalid manual door_code" in res.errors[0]
+    rec = store.get_reservation("203")
+    assert rec is not None
+    assert rec.pin is None

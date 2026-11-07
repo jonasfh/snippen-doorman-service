@@ -32,6 +32,14 @@ def generate_secure_pin(length: int = 6) -> str:
     return f"{num:0{length}d}"
 
 
+def is_valid_pin(pin: str | None) -> bool:
+    """Return True if pin is a valid 4 to 6 digit numeric string."""
+    if not pin or not isinstance(pin, str):
+        return False
+    cleaned = pin.strip()
+    return cleaned.isdigit() and 4 <= len(cleaned) <= 6
+
+
 @dataclass
 class PollTickResult:
     """Summary of operations performed during a single polling cycle."""
@@ -118,8 +126,18 @@ class BookingPoller:
 
             if existing is None:
                 # NEW reservation
-                pin = remote.door_code
-                if pin is None and self.auto_generate_pin:
+                pin: str | None = None
+                if remote.door_code is not None:
+                    if is_valid_pin(remote.door_code):
+                        pin = remote.door_code.strip()
+                    else:
+                        msg = (
+                            f"Invalid manual door_code '{remote.door_code}' for booking "
+                            f"{booking_id} (expected 4-6 digits)."
+                        )
+                        logger.error(msg)
+                        result.errors.append(msg)
+                elif self.auto_generate_pin:
                     pin = self.pin_generator()
                     try:
                         self.client.update_booking_code(booking_id, pin)
@@ -153,17 +171,40 @@ class BookingPoller:
 
             else:
                 # Existing reservation - check for content changes
-                target_pin = remote.door_code if remote.door_code is not None else existing.pin
-                if target_pin is None and self.auto_generate_pin:
-                    target_pin = self.pin_generator()
-                    try:
-                        self.client.update_booking_code(booking_id, target_pin)
-                    except BookingClientError as exc:
-                        logger.warning(
-                            "Failed to report generated PIN for existing booking %s: %s",
-                            booking_id,
-                            exc,
+                target_pin: str | None = None
+                if remote.door_code is not None:
+                    if is_valid_pin(remote.door_code):
+                        target_pin = remote.door_code.strip()
+                    else:
+                        msg = (
+                            f"Invalid manual door_code '{remote.door_code}' for existing booking "
+                            f"{booking_id} (expected 4-6 digits); keeping existing PIN."
                         )
+                        logger.error(msg)
+                        result.errors.append(msg)
+                        target_pin = existing.pin if is_valid_pin(existing.pin) else None
+                else:
+                    if is_valid_pin(existing.pin):
+                        target_pin = existing.pin
+                        if self.auto_generate_pin:
+                            try:
+                                self.client.update_booking_code(booking_id, target_pin)
+                            except BookingClientError as exc:
+                                logger.warning(
+                                    "Failed to re-sync existing PIN for booking %s: %s",
+                                    booking_id,
+                                    exc,
+                                )
+                    elif self.auto_generate_pin:
+                        target_pin = self.pin_generator()
+                        try:
+                            self.client.update_booking_code(booking_id, target_pin)
+                        except BookingClientError as exc:
+                            logger.warning(
+                                "Failed to report generated PIN for existing booking %s: %s",
+                                booking_id,
+                                exc,
+                            )
 
                 new_hash = compute_content_hash(remote.start_time, remote.end_time, target_pin)
                 has_changed = new_hash != existing.content_hash or existing.status in (

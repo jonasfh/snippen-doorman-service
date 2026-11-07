@@ -6,12 +6,14 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from snippen_doorman.db import Database
 from snippen_doorman.poller import BookingPoller, PollTickResult
 from snippen_doorman.provisioner import PinProvisioner, ProvisionTickResult
 from snippen_doorman.state.base import ReservationStore
 from snippen_doorman.state.models import ReservationStatus
+from snippen_doorman.status_reporter import build_full_status_payload
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ class SyncTickResult:
     updated_schedules: list[str] = field(default_factory=list)
     revoked_schedules: list[str] = field(default_factory=list)
     heartbeat_locks: list[str] = field(default_factory=list)
+    full_status: dict[str, Any] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
 
@@ -179,7 +182,7 @@ class DoormanSyncEngine:
 
         result.poll = all_poll_res
 
-        # 2d. Reconcile any unhydrated active bookings (e.g., initial startup or crash recovery)
+        # 2d. Reconcile any unhydrated active bookings or changed PINs (including manual codes)
         for rec in self.store.list_reservations():
             if (
                 rec.status
@@ -192,16 +195,18 @@ class DoormanSyncEngine:
                 and rec.valid_to + self.provisioner.grace_period >= now
             ):
                 rec_target_lock = rec.lock_id or self.lock_id
-                pin_rec = self.db.get_pin(rec.booking_id, lock_id=rec_target_lock)
-                if pin_rec is None:
-                    self.provisioner.schedule_or_update(
-                        booking_id=rec.booking_id,
-                        pin=rec.pin,
-                        valid_from=rec.valid_from,
-                        valid_to=rec.valid_to,
-                        lock_id=rec_target_lock,
-                    )
-                    result.scheduled.append(rec.booking_id)
+                _, changed = self.provisioner.schedule_or_update(
+                    booking_id=rec.booking_id,
+                    pin=rec.pin,
+                    valid_from=rec.valid_from,
+                    valid_to=rec.valid_to,
+                    lock_id=rec_target_lock,
+                )
+                if changed and (
+                    rec.booking_id not in result.scheduled
+                    and rec.booking_id not in result.updated_schedules
+                ):
+                    result.updated_schedules.append(rec.booking_id)
 
         # Step 3: Execute JIT provisioning reconciliation on lock
         try:
@@ -266,6 +271,27 @@ class DoormanSyncEngine:
                 msg = f"Unexpected failure in RTC heartbeat check: {exc}"
                 logger.error(msg)
                 result.errors.append(msg)
+
+        # Step 5: Build full JSON status and push to Snippen Booking API (#75)
+        try:
+            lock_clients = await self.provisioner._get_lock_clients()
+            full_status = build_full_status_payload(
+                db=self.db,
+                store=self.store,
+                lock_clients=lock_clients,
+                now=now,
+            )
+            result.full_status = full_status
+
+            if hasattr(self.poller, "client") and hasattr(self.poller.client, "push_door_status"):
+                try:
+                    await asyncio.to_thread(self.poller.client.push_door_status, full_status)
+                except Exception as push_exc:  # noqa: BLE001
+                    logger.warning("Failed to push door status to booking API: %s", push_exc)
+        except Exception as st_exc:  # noqa: BLE001
+            msg = f"Unexpected failure building status payload: {st_exc}"
+            logger.warning(msg)
+            result.errors.append(msg)
 
         return result
 

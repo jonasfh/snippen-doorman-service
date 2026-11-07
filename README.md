@@ -141,12 +141,13 @@ python tools/parse_ha_keys.py --log-file ~/Downloads/home-assistant_*.log --outp
 ### Start Service & End-to-End Synchronization
 
 `snippen-doorman service run` runs the full end-to-end synchronization engine (`DoormanSyncEngine`) combining:
-1. `BookingPoller`: Polling `snippen-booking` REST API, generating 6-digit PIN codes if none exist, and reporting PINs back via PATCH.
+1. `BookingPoller`: Polling `snippen-booking` REST API, generating 6-digit PIN codes if none exist, and reporting PINs back via PATCH. **Manual Door Code Priority (#74)**: If an administrator has set a manual `door_code` in `snippen-booking`, Doorman respects it, skips local generation, and automatically re-syncs changed codes to physical locks.
 2. `DoormanSyncEngine`: Change detection and battery-saving sleep logic (#29). Unchanged reservations produce zero BLE communication.
 3. `PinProvisioner` & `SlotAllocator`: Just-In-Time (JIT) slot management (guest slots 9 down to 3) within configurable lead time (`--lead-time`, default 60m).
 4. `YaleLockClient`: Encrypted Bluetooth LE communication programming PIN codes and opportunistically synchronizing lock RTC clocks (`sync_rtc=True`) and capturing battery telemetry (#30).
 5. **Multi-lock & Multi-entrance support**: Manage single or multiple doors simultaneously mapped to entrance IDs in `snippen-booking` (`GET /door/locks` and `GET /door/bookings?lock_id=<id>`). Pass `--lock-id` or configure doors via discrete environment variables (`DOORMAN_LOCK_1_*`, `DOORMAN_LOCK_2_*`) or `SNIPPEN_DOORMAN_LOCKS`.
    - **Shared Lock ID**: When multiple physical doors provide access to the same rental area (e.g., *Festsalen* and *Peisestua* at Snippen grendehus both sharing `lock_id=1`), `DoormanSyncEngine` automatically deduplicates remote polling requests so the WordPress API is only queried once per cycle, while provisioned PIN codes are programmed into **all** matching physical locks.
+6. **Full Status Reporting (#75)**: On every synchronization cycle, `DoormanSyncEngine` compiles and pushes a full status snapshot to `snippen-booking` via `POST /wp-json/snippen/v1/door/status`, containing DB reservations, per-lock slot occupancy (slots 3–9), physical lock provisioning verification, and recently expired codes (within 7 days).
 
 ```bash
 # Run service daemon with configured locks and default SQLite storage
@@ -158,8 +159,13 @@ snippen-doorman service run --lock-id 1 --lock-id 2
 # Run with multiple locks simultaneously with mapped lock IDs
 snippen-doorman service run --locks "ytterdor=AA:BB:CC:DD:EE:01:KEY1:1:1,kjeller=AA:BB:CC:DD:EE:02:KEY2:1:2"
 
+# Inspect current service status (human readable or raw JSON)
+snippen-doorman service status
+snippen-doorman service status --json
+
 # Run a single synchronization tick and print detailed summary (polling + lock provisioning + telemetry)
 snippen-doorman service sync-once
+snippen-doorman service sync-once --json
 
 # Dry-run / offline mode without physical BLE lock
 snippen-doorman service sync-once --storage memory
