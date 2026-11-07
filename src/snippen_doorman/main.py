@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from snippen_doorman.allocator import SlotAllocator
-from snippen_doorman.ble.client import YaleLockClient
+from snippen_doorman.ble.client import YaleLockClient, create_lock_client
 from snippen_doorman.ble.discovery import discover_yale_devices
 from snippen_doorman.ble.lock_config import parse_lock_configs
 from snippen_doorman.ble.pin import YalePinError
@@ -125,7 +125,7 @@ async def run_pin_command(
     timeout: float = 20.0,
 ) -> None:
     """Connect to lock and execute PIN management operations."""
-    client = YaleLockClient(address=address, key=key, slot=key_slot)
+    client = create_lock_client(address=address, key=key, slot=key_slot)
     print(f"Connecting to lock {address} (key slot {key_slot})...")
 
     try:
@@ -212,7 +212,7 @@ async def run_schedule_command(
     valid_from: datetime | None = None,
     valid_to: datetime | None = None,
     status: str | None = None,
-    lead_time_minutes: int = 60,
+    lead_time_minutes: int = 2880,
     grace_period_minutes: int = 15,
     interval_seconds: float = 60.0,
     address: str | None = None,
@@ -223,7 +223,7 @@ async def run_schedule_command(
     """Execute booking PIN schedule operations."""
     lock_client = None
     if address and key:
-        lock_client = YaleLockClient(address=address, key=key, slot=key_slot)
+        lock_client = create_lock_client(address=address, key=key, slot=key_slot)
 
     try:
         with Database(db_path) as db:
@@ -321,7 +321,7 @@ async def run_service_command(
     address: str | None = None,
     key: str | None = None,
     key_slot: int = 1,
-    lead_time_minutes: int = 60,
+    lead_time_minutes: int = 2880,
     grace_period_minutes: int = 15,
     guest_slot_min: int = 3,
     guest_slot_max: int = 9,
@@ -351,7 +351,7 @@ async def run_service_command(
         default_lock_id=lock_id,
     )
     lock_clients = [
-        YaleLockClient(
+        create_lock_client(
             address=cfg.address,
             key=cfg.key,
             slot=cfg.slot,
@@ -901,10 +901,10 @@ def build_parser() -> argparse.ArgumentParser:
             default=int(
                 os.getenv(
                     "SNIPPEN_PIN_LEAD_TIME_MINUTES",
-                    os.getenv("SNIPPEN_LEAD_TIME_MINUTES", "60"),
+                    os.getenv("SNIPPEN_LEAD_TIME_MINUTES", "2880"),
                 )
             ),
-            help="Lead time in minutes before booking start (default: 60)",
+            help="Lead time in minutes before booking start (default: 2880)",
         )
         p.add_argument(
             "--grace-period",
@@ -1146,7 +1146,7 @@ def main_cli(argv: list[str] | None = None) -> None:
                     valid_from=valid_from,
                     valid_to=valid_to,
                     status=getattr(args, "status", None),
-                    lead_time_minutes=getattr(args, "lead_time", 60),
+                    lead_time_minutes=getattr(args, "lead_time", 2880),
                     grace_period_minutes=getattr(args, "grace_period", 15),
                     interval_seconds=getattr(args, "interval", 60.0),
                     address=getattr(args, "address", None),
@@ -1175,7 +1175,7 @@ def main_cli(argv: list[str] | None = None) -> None:
                     address=getattr(args, "address", None),
                     key=getattr(args, "key", None),
                     key_slot=getattr(args, "key_slot", 1),
-                    lead_time_minutes=getattr(args, "lead_time", 60),
+                    lead_time_minutes=getattr(args, "lead_time", 2880),
                     grace_period_minutes=getattr(args, "grace_period", 15),
                     guest_slot_min=getattr(args, "guest_slot_min", 3),
                     guest_slot_max=getattr(args, "guest_slot_max", 9),

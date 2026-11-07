@@ -8,7 +8,7 @@ import pytest
 from yalexs_ble import DoorStatus, LockStatus
 from yalexs_ble.session import AuthError
 
-from snippen_doorman.ble.client import YaleLockClient
+from snippen_doorman.ble.client import MockLockClient, YaleLockClient, create_lock_client
 
 
 def test_client_validation() -> None:
@@ -498,5 +498,97 @@ def test_add_pin_with_sync_rtc(monkeypatch: pytest.MonkeyPatch) -> None:
         assert sent_commands[2] == ("add_pin_set", 0x27)
         assert sent_commands[3] == ("add_pin_schedule", 0x2B)
         assert sent_commands[4] == ("add_pin_commit", 0x2C)
+
+    asyncio.run(_run())
+
+
+def test_mock_lock_client_operations() -> None:
+    """Test MockLockClient adds, lists, and deletes pins in simulation mode."""
+
+    async def _run():
+        client = MockLockClient(address="00:11:22:33:44:55", lock_id=1)
+        assert client.address == "00:11:22:33:44:55"
+        assert client.lock_id == "1"
+        assert client.is_running is True
+
+        st = await client.get_status()
+        assert st.lock_status == "locked"
+        assert st.door_status == "closed"
+        assert st.battery == 95
+
+        await client.unlock()
+        assert client.state.lock_status == "unlocked"
+
+        await client.lock()
+        assert client.state.lock_status == "locked"
+
+        now = datetime.now(UTC)
+        ts = await client.set_rtc(now)
+        assert ts > 0
+
+        pin_res = await client.add_pin(pin="654321", slot=3, valid_from=now)
+        assert pin_res.pin == "654321"
+        assert pin_res.slot == 3
+
+        listed = await client.list_pins()
+        assert len(listed) == 1
+        assert listed[0].pin == "654321"
+
+        deleted = await client.delete_pin(slot=3)
+        assert deleted is True
+        assert len(await client.list_pins()) == 0
+
+        await client.disconnect()
+        assert client.disconnected is True
+
+    asyncio.run(_run())
+
+
+def test_create_lock_client_mock_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test create_lock_client selects MockLockClient when requested or environment triggers it."""
+    # Explicit mock
+    c1 = create_lock_client(
+        address="AA:BB:CC:DD:EE:01",
+        key="0123456789abcdef0123456789abcdef",
+        mock=True,
+    )
+    assert isinstance(c1, MockLockClient)
+
+    # Via env var
+    monkeypatch.setenv("SNIPPEN_DOORMAN_MOCK_BLE", "1")
+    c2 = create_lock_client(
+        address="AA:BB:CC:DD:EE:02",
+        key="0123456789abcdef0123456789abcdef",
+    )
+    assert isinstance(c2, MockLockClient)
+
+
+def test_yale_lock_client_delegates_to_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test YaleLockClient with mock=True or env var delegates seamlessly to MockLockClient."""
+    monkeypatch.setenv("SNIPPEN_DOORMAN_MOCK_BLE", "true")
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:03",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+        assert client._mock_client is not None
+        assert client.state.lock_status == "UNKNOWN"
+
+        added = await client.add_pin(pin="112233", slot=5)
+        assert added.pin == "112233"
+        assert added.slot == 5
+        assert client.state.lock_status == "locked"
+
+        pins = await client.list_pins()
+        assert len(pins) == 1
+        assert pins[0].pin == "112233"
+
+        assert await client.delete_pin(slot=5) is True
+        assert len(await client.list_pins()) == 0
+
+        await client.disconnect()
+        assert client._mock_client.disconnected is True
 
     asyncio.run(_run())

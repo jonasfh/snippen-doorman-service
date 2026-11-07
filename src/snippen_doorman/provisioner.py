@@ -16,7 +16,7 @@ from snippen_doorman.db import Database, PinRecord, PinStatus
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LEAD_TIME_MINUTES = 60
+DEFAULT_LEAD_TIME_MINUTES = 2880
 DEFAULT_GRACE_PERIOD_MINUTES = 15
 
 
