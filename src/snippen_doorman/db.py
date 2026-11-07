@@ -62,6 +62,27 @@ class PinRecord:
             self.status = PinStatus(self.status)
 
 
+@dataclass
+class PinLockStateRecord:
+    """Represents the provisioning state of a booking PIN on a specific physical lock."""
+
+    booking_id: str
+    lock_address: str
+    lock_name: str = "Hoveddør"
+    lock_id: str = "default"
+    slot: int | None = None
+    pin: str = ""
+    status: PinStatus = PinStatus.SCHEDULED
+    error_message: str | None = None
+    id: int | None = None
+    created_at: datetime | None = None
+    modified_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.status, str) and not isinstance(self.status, PinStatus):
+            self.status = PinStatus(self.status)
+
+
 def _format_datetime(dt: datetime) -> str:
     """Format datetime as UTC ISO-8601 string."""
     if dt.tzinfo is None:
@@ -173,6 +194,35 @@ class Database:
                     modified_at TEXT NOT NULL
                 );
                 """
+            )
+
+            # Per-physical-lock provisioning state tracking
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pin_lock_states (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    booking_id TEXT NOT NULL,
+                    lock_address TEXT NOT NULL,
+                    lock_name TEXT NOT NULL,
+                    lock_id TEXT DEFAULT 'default',
+                    slot INTEGER,
+                    pin TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL,
+                    modified_at TEXT NOT NULL,
+                    UNIQUE(booking_id, lock_address)
+                );
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pin_lock_states_booking_id ON pin_lock_states(booking_id);"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pin_lock_states_lock_address ON pin_lock_states(lock_address);"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pin_lock_states_status ON pin_lock_states(status);"
             )
 
     def record_lock_status(
@@ -415,12 +465,139 @@ class Database:
                     "DELETE FROM pins WHERE booking_id = ? AND lock_id = ?",
                     (booking_id.strip(), lock_id.strip()),
                 )
+                self._conn.execute(
+                    "DELETE FROM pin_lock_states WHERE booking_id = ? AND lock_id = ?",
+                    (booking_id.strip(), lock_id.strip()),
+                )
             else:
                 cursor = self._conn.execute(
                     "DELETE FROM pins WHERE booking_id = ?",
                     (booking_id.strip(),),
                 )
+                self._conn.execute(
+                    "DELETE FROM pin_lock_states WHERE booking_id = ?",
+                    (booking_id.strip(),),
+                )
             return cursor.rowcount > 0
+
+    def upsert_pin_lock_state(
+        self,
+        booking_id: str,
+        lock_address: str,
+        pin: str,
+        status: PinStatus | str = PinStatus.SCHEDULED,
+        *,
+        lock_name: str = "Hoveddør",
+        lock_id: str = "default",
+        slot: int | None = None,
+        error_message: str | None = None,
+    ) -> PinLockStateRecord:
+        """Insert or update the provisioning state for a booking PIN on a physical lock."""
+        now_utc = datetime.now(UTC)
+        now_str = _format_datetime(now_utc)
+        clean_bid = booking_id.strip()
+        clean_addr = lock_address.strip()
+        clean_name = lock_name.strip() if lock_name else "Hoveddør"
+        clean_lid = lock_id.strip() if lock_id else "default"
+        status_val = status.value if isinstance(status, PinStatus) else str(status)
+
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO pin_lock_states (
+                    booking_id, lock_address, lock_name, lock_id, slot, pin,
+                    status, error_message, created_at, modified_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(booking_id, lock_address) DO UPDATE SET
+                    lock_name = excluded.lock_name,
+                    lock_id = excluded.lock_id,
+                    slot = excluded.slot,
+                    pin = excluded.pin,
+                    status = excluded.status,
+                    error_message = excluded.error_message,
+                    modified_at = excluded.modified_at;
+                """,
+                (
+                    clean_bid,
+                    clean_addr,
+                    clean_name,
+                    clean_lid,
+                    slot,
+                    pin,
+                    status_val,
+                    error_message,
+                    now_str,
+                    now_str,
+                ),
+            )
+            cursor = self._conn.execute(
+                "SELECT * FROM pin_lock_states WHERE booking_id = ? AND lock_address = ?",
+                (clean_bid, clean_addr),
+            )
+            row = cursor.fetchone()
+        return self._row_to_lock_state_record(row)
+
+    def get_pin_lock_state(self, booking_id: str, lock_address: str) -> PinLockStateRecord | None:
+        """Fetch per-physical-lock provisioning state for a booking and lock address."""
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT * FROM pin_lock_states WHERE booking_id = ? AND lock_address = ?",
+                (booking_id.strip(), lock_address.strip()),
+            )
+            row = cursor.fetchone()
+        return self._row_to_lock_state_record(row) if row else None
+
+    def list_pin_lock_states(
+        self,
+        booking_id: str | None = None,
+        lock_address: str | None = None,
+        lock_id: str | None = None,
+        status: PinStatus | str | None = None,
+    ) -> list[PinLockStateRecord]:
+        """List per-physical-lock PIN states with optional filters."""
+        query = "SELECT * FROM pin_lock_states"
+        params: list[str] = []
+        conditions: list[str] = []
+
+        if booking_id is not None:
+            conditions.append("booking_id = ?")
+            params.append(booking_id.strip())
+        if lock_address is not None:
+            conditions.append("lock_address = ?")
+            params.append(lock_address.strip())
+        if lock_id is not None:
+            conditions.append("lock_id = ?")
+            params.append(lock_id.strip())
+        if status is not None:
+            status_val = status.value if isinstance(status, PinStatus) else str(status)
+            conditions.append("status = ?")
+            params.append(status_val)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY id ASC"
+
+        with self._lock:
+            cursor = self._conn.execute(query, tuple(params))
+            rows = cursor.fetchall()
+        return [self._row_to_lock_state_record(row) for row in rows]
+
+    def _row_to_lock_state_record(self, row: sqlite3.Row) -> PinLockStateRecord:
+        """Convert a SQLite row to a PinLockStateRecord instance."""
+        return PinLockStateRecord(
+            id=row["id"],
+            booking_id=row["booking_id"],
+            lock_address=row["lock_address"],
+            lock_name=row["lock_name"] or "Hoveddør",
+            lock_id=row["lock_id"] or "default",
+            slot=row["slot"],
+            pin=row["pin"],
+            status=PinStatus(row["status"]),
+            error_message=row["error_message"],
+            created_at=_parse_datetime(row["created_at"]),
+            modified_at=_parse_datetime(row["modified_at"]),
+        )
 
     def _row_to_record(self, row: sqlite3.Row) -> PinRecord:
         """Convert a SQLite row to a PinRecord instance."""

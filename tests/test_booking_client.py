@@ -216,3 +216,57 @@ def test_fetch_bookings_with_lock_id(client):
         call_args = mock_urlopen.call_args
         req = call_args[0][0]
         assert req.full_url == "https://example.com/wp-json/snippen/v1/door/bookings?lock_id=2"
+
+
+def test_fetch_bookings_with_include_expired_days_and_metadata(client):
+    mock_payload = {
+        "server_time": "2026-11-07T13:15:00Z",
+        "bookings": [
+            {
+                "id": 101,
+                "booking_ids": [101, 102],
+                "booking_objects": [{"id": 1, "name": "Peisestuen"}],
+                "lock_ids": [1],
+                "start_time": "2026-11-07T15:00:00Z",
+                "end_time": "2026-11-09T11:00:00Z",
+                "door_code": "  123456  ",
+                "door_code_updated_at": "2026-11-07T12:30:00Z",
+            }
+        ],
+    }
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = json.dumps(mock_payload).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        bookings = client.fetch_bookings(lock_id="1", include_expired_days=7)
+        req = mock_urlopen.call_args[0][0]
+        assert "lock_id=1" in req.full_url
+        assert "include_expired_days=7" in req.full_url
+        assert len(bookings) == 1
+        b = bookings[0]
+        assert b.id == "101"
+        assert b.door_code == "123456"
+        assert b.booking_ids == ["101", "102"]
+        assert b.booking_objects == [{"id": 1, "name": "Peisestuen"}]
+        assert b.lock_ids == ["1"]
+        assert b.door_code_updated_at == datetime(2026, 11, 7, 12, 30, 0, tzinfo=UTC)
+
+
+def test_push_door_status(client):
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = json.dumps(
+        {"success": True, "received_at": "2026-11-07T13:15:11Z"}
+    ).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    payload = {"generated_at": "2026-11-07T13:15:10Z", "locks": []}
+    with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        res = client.push_door_status(payload)
+        assert res["success"] is True
+        req = mock_urlopen.call_args[0][0]
+        assert req.get_method() == "POST"
+        assert req.full_url == "https://example.com/wp-json/snippen/v1/door/status"
+        assert json.loads(req.data.decode("utf-8")) == payload

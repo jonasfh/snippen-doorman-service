@@ -836,3 +836,76 @@ async def test_sync_engine_rtc_heartbeat_error_handling(sync_env):
     assert len(res.errors) >= 1
     assert any("RTC heartbeat" in err for err in res.errors)
     assert fake_client.address not in res.heartbeat_locks
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_pushes_full_status_to_booking(sync_env):
+    """Test that sync_once generates full status and pushes it to snippen-booking (#74, #75)."""
+    now = datetime(2026, 11, 1, 10, 0, tzinfo=UTC)
+    fake_client = sync_env["lock"]
+    booking_client = sync_env["booking_client"]
+    booking_client.push_door_status.return_value = {"status": "ok", "received_at": now.isoformat()}
+    engine = sync_env["engine"]
+
+    booking = RemoteBooking(
+        id="b_status_1",
+        start_time=now + timedelta(minutes=15),
+        end_time=now + timedelta(hours=2),
+        door_code="987654",
+        booking_ids=["b_status_1"],
+        booking_objects=["Peisestuen"],
+        lock_ids=[fake_client.address],
+    )
+    booking_client.fetch_bookings.return_value = [booking]
+
+    result = await engine.sync_once(now=now)
+
+    assert result.full_status is not None
+    assert result.full_status["expired_window_days"] == 7
+    assert "reservations_in_db" in result.full_status
+    assert "locks" in result.full_status
+    assert "provisioned_on_locks" in result.full_status
+
+    # Verify push_door_status was called with the generated payload
+    assert booking_client.push_door_status.called
+    pushed_payload = booking_client.push_door_status.call_args[0][0]
+    assert pushed_payload == result.full_status
+    assert pushed_payload["reservations_in_db"][0]["booking_id"] == "b_status_1"
+    assert pushed_payload["reservations_in_db"][0]["pin"] == "987654"
+    assert pushed_payload["reservations_in_db"][0]["all_locks_provisioned"] is True
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_manual_door_code_update_propagates_to_locks(sync_env):
+    """Test that updating door_code in WordPress propagates and updates physical locks (#74)."""
+    now = datetime(2026, 11, 1, 10, 0, tzinfo=UTC)
+    fake_client = sync_env["lock"]
+    booking_client = sync_env["booking_client"]
+    engine = sync_env["engine"]
+
+    # Initial tick: booking exists with generated/initial code
+    b_initial = RemoteBooking(
+        id="b_manual_update",
+        start_time=now + timedelta(minutes=10),
+        end_time=now + timedelta(hours=2),
+        door_code="111111",
+    )
+    booking_client.fetch_bookings.return_value = [b_initial]
+    res1 = await engine.sync_once(now=now)
+    assert "b_manual_update" in res1.provision.activated
+    assert fake_client.pins[9] == "111111"
+
+    # Step 2: WordPress changes manual code to '222222'
+    b_updated = RemoteBooking(
+        id="b_manual_update",
+        start_time=now + timedelta(minutes=10),
+        end_time=now + timedelta(hours=2),
+        door_code="222222",
+    )
+    booking_client.fetch_bookings.return_value = [b_updated]
+    res2 = await engine.sync_once(now=now + timedelta(minutes=1))
+
+    # The PIN on the physical lock should now be updated to 222222
+    assert "b_manual_update" in res2.provision.updated
+    assert fake_client.pins[9] == "222222"
+    assert res2.full_status["reservations_in_db"][0]["pin"] == "222222"

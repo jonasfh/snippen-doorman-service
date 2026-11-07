@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-11-07
+
+### Added
+- Manual door code prioritization (#74): If a manual `door_code` is set in `snippen-booking`, `BookingPoller` prioritizes and preserves the remote PIN instead of auto-generating a new code.
+- Automatic re-sync of manual door code changes (#74): When WordPress updates an active booking's `door_code`, `DoormanSyncEngine` updates SQLite, transitions the PIN state to `PENDING_UPDATE`, and reprovisions the updated PIN across physical locks in-place.
+- Full JSON status reporting snapshot (#75): Created `status_reporter.py` generating complete JSON telemetry including database reservations, physical lock slot occupancy maps (slots 3–9), provisioning states per physical lock, and recently expired codes (within 7 days).
+- Automatic status pushing (#75): `DoormanSyncEngine` automatically pushes full JSON status to `snippen-booking` via `POST /wp-json/snippen/v1/door/status` on every synchronization tick.
+- Multi-physical-door provisioning verification (`pin_lock_states` table in `src/snippen_doorman/db.py`): Tracks per-physical-lock provisioning statuses (`PROVISIONED`, `PENDING_UPDATE`, `SCHEDULED`, `FAILED`, `EXPIRED`) so bookings sharing multiple doors (e.g. *Peisestuen* and *Festsalen* having 2 physical entrance doors) report `all_locks_provisioned` and verify programming on both physical doors.
+- Status CLI and REST endpoints (#75): Added `snippen-doorman service status [--json]`, `--json` option to `service sync-once`, and `GET /api/status/full` in `DoormanWebServer`.
+- Mock server endpoint `POST /wp-json/snippen/v1/door/status` in `src/snippen_doorman/mock_server.py` for integration testing.
+
 ## [0.18.0] - 2026-11-01
 
 ### Added

@@ -60,6 +60,10 @@ class RemoteBooking:
     start_time: datetime
     end_time: datetime
     door_code: str | None = None
+    door_code_updated_at: datetime | None = None
+    booking_ids: list[str] = field(default_factory=list)
+    booking_objects: list[dict[str, Any]] = field(default_factory=list)
+    lock_ids: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.id = str(self.id)
@@ -72,7 +76,25 @@ class RemoteBooking:
         else:
             self.end_time = self.end_time.astimezone(UTC)
         if self.door_code is not None:
-            self.door_code = str(self.door_code).strip()
+            cleaned = str(self.door_code).strip()
+            self.door_code = cleaned if cleaned else None
+        if isinstance(self.door_code_updated_at, str):
+            self.door_code_updated_at = parse_utc_iso(self.door_code_updated_at)
+        elif self.door_code_updated_at is not None:
+            if self.door_code_updated_at.tzinfo is None:
+                self.door_code_updated_at = self.door_code_updated_at.replace(tzinfo=UTC)
+            else:
+                self.door_code_updated_at = self.door_code_updated_at.astimezone(UTC)
+        if not isinstance(self.booking_ids, list) or not self.booking_ids:
+            self.booking_ids = [self.id]
+        else:
+            self.booking_ids = [str(bid) for bid in self.booking_ids if bid is not None]
+        if not isinstance(self.booking_objects, list):
+            self.booking_objects = []
+        if not isinstance(self.lock_ids, list):
+            self.lock_ids = []
+        else:
+            self.lock_ids = [str(lid) for lid in self.lock_ids if lid is not None]
 
 
 class SnippenBookingClient:
@@ -205,20 +227,28 @@ class SnippenBookingClient:
             )
         return results
 
-    def fetch_bookings(self, lock_id: int | str | None = None) -> list[RemoteBooking]:
+    def fetch_bookings(
+        self,
+        lock_id: int | str | None = None,
+        include_expired_days: int = 0,
+    ) -> list[RemoteBooking]:
         """Fetch current and upcoming reservations from Snippen Booking platform.
 
-        Endpoint: GET /wp-json/snippen/v1/door/bookings(?lock_id=<id>)
+        Endpoint: GET /wp-json/snippen/v1/door/bookings(?lock_id=<id>&include_expired_days=<days>)
 
         Args:
             lock_id: Optional lock ID to filter reservations for a specific door lock.
+            include_expired_days: Optional number of past days of expired bookings to include.
 
         Returns:
             List of RemoteBooking instances.
         """
-        path = "bookings"
+        query_params: list[str] = []
         if lock_id is not None:
-            path = f"bookings?lock_id={urllib.parse.quote(str(lock_id))}"
+            query_params.append(f"lock_id={urllib.parse.quote(str(lock_id))}")
+        if include_expired_days > 0:
+            query_params.append(f"include_expired_days={int(include_expired_days)}")
+        path = f"bookings?{'&'.join(query_params)}" if query_params else "bookings"
         response = self._request("GET", path)
         bookings_data = (
             response.get("bookings", response) if isinstance(response, dict) else response
@@ -232,8 +262,8 @@ class SnippenBookingClient:
             if not isinstance(item, dict):
                 continue
             booking_id = item.get("id")
-            start_str = item.get("start_time")
-            end_str = item.get("end_time")
+            start_str = item.get("start_time") or item.get("start_from")
+            end_str = item.get("end_time") or item.get("end_to")
             if booking_id is None or not start_str or not end_str:
                 logger.warning("Skipping malformed booking item: %r", item)
                 continue
@@ -243,15 +273,31 @@ class SnippenBookingClient:
                 logger.warning("Skipping booking with unparseable timestamps: %r", item)
                 continue
             door_code = item.get("door_code")
+            updated_at_raw = item.get("door_code_updated_at")
+            raw_booking_ids = item.get("booking_ids")
+            raw_objects = item.get("booking_objects")
+            raw_lock_ids = item.get("lock_ids")
+            if not isinstance(raw_lock_ids, list) and item.get("lock_id") is not None:
+                raw_lock_ids = [item.get("lock_id")]
             results.append(
                 RemoteBooking(
                     id=str(booking_id),
                     start_time=start_dt,
                     end_time=end_dt,
                     door_code=str(door_code) if door_code is not None else None,
+                    door_code_updated_at=parse_utc_iso(str(updated_at_raw))
+                    if updated_at_raw
+                    else None,
+                    booking_ids=list(raw_booking_ids)
+                    if isinstance(raw_booking_ids, list)
+                    else [str(booking_id)],
+                    booking_objects=list(raw_objects) if isinstance(raw_objects, list) else [],
+                    lock_ids=list(raw_lock_ids) if isinstance(raw_lock_ids, list) else [],
                 )
             )
         return results
+
+    get_active_bookings = fetch_bookings
 
     def update_booking_code(self, booking_id: int | str, door_code: str | None) -> bool:
         """Update or clear assigned door code for a booking.
@@ -271,3 +317,18 @@ class SnippenBookingClient:
         if isinstance(res, dict) and res.get("success") is True:
             return True
         return True
+
+    def push_door_status(self, status_payload: dict[str, Any]) -> dict[str, Any]:
+        """Push full Doorman status snapshot to Snippen Booking platform.
+
+        Endpoint: POST /wp-json/snippen/v1/door/status
+
+        Args:
+            status_payload: Complete status JSON (locks, reservations_in_db,
+                provisioned_on_locks, recently_expired).
+
+        Returns:
+            Server response dictionary.
+        """
+        res = self._request("POST", "status", payload=status_payload)
+        return res if isinstance(res, dict) else {"success": True}

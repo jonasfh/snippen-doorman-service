@@ -64,10 +64,24 @@ Access codes can be generated days or weeks in advance for tenants, but are only
 - `booking_id`: Unique external reservation reference
 - `slot`: Keypad slot index (3–9 when provisioned, NULL when scheduled/expired/revoked)
 - `pin`: 4 to 6 digit numeric credential
-- `status`: Lifecycle state (`SCHEDULED`, `PROVISIONED`, `REVOKED`, `EXPIRED`)
+- `status`: Lifecycle state (`SCHEDULED`, `PROVISIONED`, `PENDING_UPDATE`, `PENDING_REVOKE`, `REVOKED`, `EXPIRED`)
 - `valid_from`: Start of reservation validity (UTC ISO-8601)
 - `valid_to`: End of reservation validity (UTC ISO-8601)
 - `lock_id`: Optional remote lock reference ID
+- `created_at`: Creation timestamp (UTC ISO-8601)
+- `modified_at`: Last modification timestamp (UTC ISO-8601)
+
+### Per-Physical-Lock States Table (`pin_lock_states`)
+Tracks provisioning status across multiple physical door locks sharing the same booking or entrance:
+- `id`: Integer primary key (autoincrement)
+- `booking_id`: Unique external reservation reference
+- `lock_address`: Bluetooth MAC address of physical lock (e.g. `98:1B:B5:0B:BB:35`)
+- `lock_name`: Descriptive lock name (e.g. `Inngangsdør 1`)
+- `lock_id`: Entrance ID in `snippen-booking`
+- `slot`: Keypad slot index on this physical lock (3–9 or NULL)
+- `pin`: Credential programmed or pending on this lock
+- `status`: Provisioning state (`SCHEDULED`, `PROVISIONED`, `PENDING_UPDATE`, `FAILED`, `EXPIRED`, `REVOKED`)
+- `last_provisioned_at`: Timestamp when BLE programming succeeded
 - `created_at`: Creation timestamp (UTC ISO-8601)
 - `modified_at`: Last modification timestamp (UTC ISO-8601)
 
@@ -81,10 +95,16 @@ Access codes can be generated days or weeks in advance for tenants, but are only
 
 ### Snippen Booking API
 - Remote Lock Discovery: `GET /wp-json/snippen/v1/door/locks`
-- Door-Specific Bookings Polling: `GET /wp-json/snippen/v1/door/bookings?lock_id=<id>`
+- Door-Specific Bookings Polling: `GET /wp-json/snippen/v1/door/bookings?lock_id=<id>&include_expired_days=7`
+- Manual Door Code Synchronization: If `door_code` is set or updated manually in Snippen Booking, Doorman prioritizes this code over local generation and automatically reprovisions the physical locks (`PENDING_UPDATE`).
+- Full Status Reporting: `POST /wp-json/snippen/v1/door/status` pushes a snapshot of all DB reservations, keypad slot mappings per physical lock (slots 3–9), provisioning states per physical door, and recently expired codes (within 7 days) on each sync cycle.
 - Receive booking notifications
 - Update access code status
 - Report access events
+
+### Local HTTP API
+- `GET /api/status`: Basic health and current status overview.
+- `GET /api/status/full`: Complete JSON status snapshot matching the status reporting schema pushed to Snippen Booking.
 
 ### Yale Doorman Module
 - Create temporary codes on lock

@@ -21,6 +21,7 @@ from snippen_doorman.db import Database, PinStatus
 from snippen_doorman.poller import BookingPoller
 from snippen_doorman.provisioner import PinProvisioner, run_provisioning_scheduler
 from snippen_doorman.state import create_reservation_store
+from snippen_doorman.status_reporter import build_full_status_payload
 from snippen_doorman.sync import DoormanSyncEngine
 
 
@@ -331,6 +332,7 @@ async def run_service_command(
     web_tls: bool = True,
     tls_cert: str = "data/tls/cert.pem",
     tls_key: str = "data/tls/key.pem",
+    output_json: bool = False,
 ) -> None:
     """Run Snippen Booking synchronization service or single tick."""
     path = database_path if storage_type == "sqlite" else json_path
@@ -387,15 +389,46 @@ async def run_service_command(
     )
 
     try:
-        if action == "sync-once":
-            print(f"Executing synchronization cycle against {api_url}...")
-            if lock_clients:
-                lock_names = ", ".join(f"'{cfg.name}' [{cfg.address}]" for cfg in lock_configs)
-                print(f"Configured locks ({len(lock_clients)}): {lock_names}")
+        if action == "status":
+            full_status = build_full_status_payload(
+                db=db,
+                store=store,
+                lock_configs=lock_configs,
+                lock_clients=lock_clients,
+                expired_window_days=7,
+                guest_slot_min=guest_slot_min,
+                guest_slot_max=guest_slot_max,
+            )
+            if output_json:
+                import json
+
+                print(json.dumps(full_status, indent=2))
             else:
-                print("No BLE locks configured (dry-run/offline provisioning mode).")
+                print("\n--- Snippen Doorman Status ---")
+                print(f"Generated at:            {full_status['generated_at']}")
+                print(f"Locks:                   {len(full_status['locks'])}")
+                print(f"Reservations in DB:      {len(full_status['reservations_in_db'])}")
+                print(f"Provisioned on locks:    {len(full_status['provisioned_on_locks'])}")
+                print(f"Recently expired (7d):   {len(full_status['recently_expired'])}")
+            return
+
+        if action == "sync-once":
+            if not output_json:
+                print(f"Executing synchronization cycle against {api_url}...")
+                if lock_clients:
+                    lock_names = ", ".join(f"'{cfg.name}' [{cfg.address}]" for cfg in lock_configs)
+                    print(f"Configured locks ({len(lock_clients)}): {lock_names}")
+                else:
+                    print("No BLE locks configured (dry-run/offline provisioning mode).")
 
             result = await sync_engine.sync_once()
+
+            if output_json:
+                import json
+
+                print(json.dumps(result.full_status, indent=2))
+                return
+
             print("\n--- Synchronization Summary ---")
             print(
                 f"Added:     {len(result.poll.added)} ({', '.join(result.poll.added) if result.poll.added else 'none'})"
@@ -946,6 +979,26 @@ def build_parser() -> argparse.ArgumentParser:
         "sync-once", help="Run a single synchronization tick"
     )
     add_service_args(service_sync_parser)
+    service_sync_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        default=False,
+        help="Output full status as JSON",
+    )
+
+    # service status
+    service_status_parser = service_subparsers.add_parser(
+        "status", help="Show full status of database reservations, locks, and history"
+    )
+    add_service_args(service_status_parser)
+    service_status_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        default=False,
+        help="Output full status as JSON",
+    )
 
     # web subcommand
     web_parser = subparsers.add_parser("web", help="Start local web dashboard")
@@ -1106,6 +1159,7 @@ def main_cli(argv: list[str] | None = None) -> None:
                     web_tls=getattr(args, "web_tls", True),
                     tls_cert=getattr(args, "tls_cert", "data/tls/cert.pem"),
                     tls_key=getattr(args, "tls_key", "data/tls/key.pem"),
+                    output_json=getattr(args, "output_json", False),
                 )
             )
         except (KeyboardInterrupt, SystemExit):

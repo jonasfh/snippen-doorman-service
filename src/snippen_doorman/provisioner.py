@@ -124,6 +124,69 @@ class PinProvisioner:
         clients = await self._get_lock_clients(lock_id=lock_id)
         return clients[0] if clients else None
 
+    def _get_sync_lock_clients(self, lock_id: str | int | None = None) -> list[Any]:
+        """Resolve pre-configured lock clients synchronously."""
+        clients: list[Any] = []
+        if self.lock_clients is not None:
+            if isinstance(self.lock_clients, dict):
+                clients = list(self.lock_clients.values())
+            else:
+                clients = list(self.lock_clients)
+        elif self.lock_client is not None:
+            clients = [self.lock_client]
+
+        if lock_id is not None and lock_id != "default" and clients:
+            lid_str = str(lock_id)
+            matched = [
+                c
+                for c in clients
+                if str(getattr(c, "lock_id", None)) == lid_str
+                or getattr(c, "local_name", None) == lid_str
+                or getattr(c, "address", None) == lid_str
+            ]
+            if matched:
+                return matched
+        return clients
+
+    def _client_meta(
+        self,
+        client: Any,
+        fallback_lock_id: str = "default",
+        idx: int = 0,
+    ) -> tuple[str, str, str]:
+        """Extract (lock_address, lock_name, lock_id) from a lock client instance."""
+        raw_addr = getattr(client, "address", None)
+        if (
+            isinstance(raw_addr, str)
+            and raw_addr.strip()
+            and not hasattr(raw_addr, "_mock_return_value")
+        ):
+            addr = raw_addr.strip()
+        else:
+            addr = f"lock_{fallback_lock_id}_{idx + 1}"
+
+        raw_name = getattr(client, "local_name", None) or getattr(client, "name", None)
+        if (
+            isinstance(raw_name, str)
+            and raw_name.strip()
+            and not hasattr(raw_name, "_mock_return_value")
+        ):
+            name = raw_name.strip()
+        else:
+            name = f"Lås {idx + 1}" if idx > 0 else "Hoveddør"
+
+        raw_lid = getattr(client, "lock_id", None)
+        if (
+            raw_lid is not None
+            and not hasattr(raw_lid, "_mock_return_value")
+            and "Mock" not in type(raw_lid).__name__
+        ):
+            lid = str(raw_lid).strip() or fallback_lock_id
+        else:
+            lid = fallback_lock_id
+
+        return addr, name, lid
+
     def _record_telemetry(self, client: Any) -> None:
         """Opportunistically record lock telemetry (battery, lock status) into the database."""
         addr = getattr(client, "address", None)
@@ -220,7 +283,7 @@ class PinProvisioner:
         Returns:
             The created PinRecord in SCHEDULED status.
         """
-        return self.db.create_pin(
+        rec = self.db.create_pin(
             booking_id=booking_id,
             pin=pin,
             valid_from=valid_from,
@@ -228,6 +291,19 @@ class PinProvisioner:
             status=PinStatus.SCHEDULED,
             lock_id=lock_id,
         )
+        sync_clients = self._get_sync_lock_clients(lock_id)
+        for idx, client in enumerate(sync_clients):
+            addr, name, lid = self._client_meta(client, fallback_lock_id=lock_id, idx=idx)
+            self.db.upsert_pin_lock_state(
+                booking_id=booking_id,
+                lock_address=addr,
+                lock_name=name,
+                lock_id=lid,
+                slot=None,
+                pin=pin,
+                status=PinStatus.SCHEDULED,
+            )
+        return rec
 
     def schedule_or_update(
         self,
@@ -282,6 +358,24 @@ class PinProvisioner:
         # If SCHEDULED or PENDING_UPDATE, keep status
 
         self.db.update_pin(rec)
+
+        sync_clients = self._get_sync_lock_clients(lock_id)
+        for idx, client in enumerate(sync_clients):
+            addr, name, lid = self._client_meta(client, fallback_lock_id=lock_id, idx=idx)
+            slot_val = (
+                rec.slot
+                if rec.status in (PinStatus.PROVISIONED, PinStatus.PENDING_UPDATE)
+                else None
+            )
+            self.db.upsert_pin_lock_state(
+                booking_id=booking_id,
+                lock_address=addr,
+                lock_name=name,
+                lock_id=lid,
+                slot=slot_val,
+                pin=pin,
+                status=rec.status,
+            )
         return rec, True
 
     async def revoke_pin(self, booking_id: str, lock_id: str | None = None) -> PinRecord:
@@ -301,6 +395,8 @@ class PinProvisioner:
         if rec is None:
             raise KeyError(f"No PIN record found for booking '{booking_id}'.")
 
+        target_lock_id = rec.lock_id or lock_id or "default"
+
         if rec.status == PinStatus.REVOKED:
             return rec
 
@@ -308,17 +404,40 @@ class PinProvisioner:
             clients = await self._get_lock_clients(lock_id=rec.lock_id or lock_id)
             failed = False
             if clients:
-                for client in clients:
+                for idx, client in enumerate(clients):
+                    addr, name, lid = self._client_meta(
+                        client, fallback_lock_id=target_lock_id, idx=idx
+                    )
                     try:
                         await client.delete_pin(slot=rec.slot, pin=rec.pin)
                         self._record_telemetry(client)
+                        self.db.upsert_pin_lock_state(
+                            booking_id=booking_id,
+                            lock_address=addr,
+                            lock_name=name,
+                            lock_id=lid,
+                            slot=None,
+                            pin=rec.pin,
+                            status=PinStatus.REVOKED,
+                        )
                     except (YalePinError, TimeoutError, OSError, RuntimeError, ValueError) as exc:
                         logger.error(
-                            "Error deleting PIN on lock during revoke for booking '%s': %s",
+                            "Error deleting PIN on lock %s during revoke for booking '%s': %s",
+                            addr,
                             booking_id,
                             exc,
                         )
                         failed = True
+                        self.db.upsert_pin_lock_state(
+                            booking_id=booking_id,
+                            lock_address=addr,
+                            lock_name=name,
+                            lock_id=lid,
+                            slot=rec.slot,
+                            pin=rec.pin,
+                            status=PinStatus.PENDING_REVOKE,
+                            error_message=str(exc),
+                        )
             if failed:
                 rec.status = PinStatus.PENDING_REVOKE
                 return self.db.update_pin(rec)
@@ -327,7 +446,20 @@ class PinProvisioner:
             rec.slot = None
 
         rec.status = PinStatus.REVOKED
-        return self.db.update_pin(rec)
+        self.db.update_pin(rec)
+        clients = await self._get_lock_clients(lock_id=rec.lock_id or lock_id)
+        for idx, client in enumerate(clients):
+            addr, name, lid = self._client_meta(client, fallback_lock_id=target_lock_id, idx=idx)
+            self.db.upsert_pin_lock_state(
+                booking_id=booking_id,
+                lock_address=addr,
+                lock_name=name,
+                lock_id=lid,
+                slot=None,
+                pin=rec.pin,
+                status=PinStatus.REVOKED,
+            )
+        return rec
 
     async def tick(self, now: datetime | None = None) -> ProvisionTickResult:
         """Execute one provisioning reconciliation cycle.
@@ -362,15 +494,37 @@ class PinProvisioner:
             clients = await self._get_lock_clients(lock_id=rec.lock_id)
             failed = False
             if clients and rec.slot is not None:
-                for client in clients:
+                for idx, client in enumerate(clients):
+                    addr, name, lid = self._client_meta(
+                        client, fallback_lock_id=rec.lock_id, idx=idx
+                    )
                     try:
                         await client.delete_pin(slot=rec.slot, pin=rec.pin)
                         self._record_telemetry(client)
+                        self.db.upsert_pin_lock_state(
+                            booking_id=rec.booking_id,
+                            lock_address=addr,
+                            lock_name=name,
+                            lock_id=lid,
+                            slot=None,
+                            pin=rec.pin,
+                            status=PinStatus.REVOKED,
+                        )
                     except (YalePinError, TimeoutError, OSError, RuntimeError, ValueError) as exc:
                         msg = f"Failed to delete PIN from lock during retry revoke for '{rec.booking_id}': {exc}"
                         logger.error(msg)
                         result.errors.append(msg)
                         failed = True
+                        self.db.upsert_pin_lock_state(
+                            booking_id=rec.booking_id,
+                            lock_address=addr,
+                            lock_name=name,
+                            lock_id=lid,
+                            slot=rec.slot,
+                            pin=rec.pin,
+                            status=PinStatus.PENDING_REVOKE,
+                            error_message=str(exc),
+                        )
             if not failed:
                 if rec.slot is not None:
                     self.allocator.release(rec.slot)
@@ -386,10 +540,22 @@ class PinProvisioner:
                 clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 if clients and rec.slot is not None:
-                    for client in clients:
+                    for idx, client in enumerate(clients):
+                        addr, name, lid = self._client_meta(
+                            client, fallback_lock_id=rec.lock_id, idx=idx
+                        )
                         try:
                             await client.delete_pin(slot=rec.slot, pin=rec.pin)
                             self._record_telemetry(client)
+                            self.db.upsert_pin_lock_state(
+                                booking_id=rec.booking_id,
+                                lock_address=addr,
+                                lock_name=name,
+                                lock_id=lid,
+                                slot=None,
+                                pin=rec.pin,
+                                status=PinStatus.EXPIRED,
+                            )
                         except (
                             YalePinError,
                             TimeoutError,
@@ -401,6 +567,16 @@ class PinProvisioner:
                             logger.error(msg)
                             result.errors.append(msg)
                             failed = True
+                            self.db.upsert_pin_lock_state(
+                                booking_id=rec.booking_id,
+                                lock_address=addr,
+                                lock_name=name,
+                                lock_id=lid,
+                                slot=rec.slot,
+                                pin=rec.pin,
+                                status=PinStatus.PENDING_REVOKE,
+                                error_message=str(exc),
+                            )
                 if failed:
                     rec.status = PinStatus.PENDING_REVOKE
                     self.db.update_pin(rec)
@@ -433,7 +609,10 @@ class PinProvisioner:
 
                 clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
-                for client in clients:
+                for idx, client in enumerate(clients):
+                    addr, name, lid = self._client_meta(
+                        client, fallback_lock_id=rec.lock_id, idx=idx
+                    )
                     try:
                         await self._call_add_pin(
                             client=client,
@@ -443,11 +622,30 @@ class PinProvisioner:
                             valid_to=rec.valid_to,
                         )
                         self._record_telemetry(client)
+                        self.db.upsert_pin_lock_state(
+                            booking_id=rec.booking_id,
+                            lock_address=addr,
+                            lock_name=name,
+                            lock_id=lid,
+                            slot=slot,
+                            pin=rec.pin,
+                            status=PinStatus.PROVISIONED,
+                        )
                     except (YalePinError, TimeoutError, OSError, RuntimeError, ValueError) as exc:
                         msg = f"Failed to update PIN on lock for booking '{rec.booking_id}': {exc}"
                         logger.error(msg)
                         result.errors.append(msg)
                         failed = True
+                        self.db.upsert_pin_lock_state(
+                            booking_id=rec.booking_id,
+                            lock_address=addr,
+                            lock_name=name,
+                            lock_id=lid,
+                            slot=slot,
+                            pin=rec.pin,
+                            status=PinStatus.PENDING_UPDATE,
+                            error_message=str(exc),
+                        )
 
                 if not failed:
                     rec.slot = slot
@@ -460,10 +658,22 @@ class PinProvisioner:
                 clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 if clients and rec.slot is not None:
-                    for client in clients:
+                    for idx, client in enumerate(clients):
+                        addr, name, lid = self._client_meta(
+                            client, fallback_lock_id=rec.lock_id, idx=idx
+                        )
                         try:
                             await client.delete_pin(slot=rec.slot, pin=rec.pin)
                             self._record_telemetry(client)
+                            self.db.upsert_pin_lock_state(
+                                booking_id=rec.booking_id,
+                                lock_address=addr,
+                                lock_name=name,
+                                lock_id=lid,
+                                slot=None,
+                                pin=rec.pin,
+                                status=PinStatus.SCHEDULED,
+                            )
                         except (
                             YalePinError,
                             TimeoutError,
@@ -487,10 +697,22 @@ class PinProvisioner:
                 clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 if clients and rec.slot is not None:
-                    for client in clients:
+                    for idx, client in enumerate(clients):
+                        addr, name, lid = self._client_meta(
+                            client, fallback_lock_id=rec.lock_id, idx=idx
+                        )
                         try:
                             await client.delete_pin(slot=rec.slot, pin=rec.pin)
                             self._record_telemetry(client)
+                            self.db.upsert_pin_lock_state(
+                                booking_id=rec.booking_id,
+                                lock_address=addr,
+                                lock_name=name,
+                                lock_id=lid,
+                                slot=None,
+                                pin=rec.pin,
+                                status=PinStatus.EXPIRED,
+                            )
                         except (
                             YalePinError,
                             TimeoutError,
@@ -516,6 +738,20 @@ class PinProvisioner:
             if now > rec.valid_to + self.grace_period:
                 rec.status = PinStatus.EXPIRED
                 self.db.update_pin(rec)
+                sync_clients = self._get_sync_lock_clients(rec.lock_id)
+                for idx, client in enumerate(sync_clients):
+                    addr, name, lid = self._client_meta(
+                        client, fallback_lock_id=rec.lock_id, idx=idx
+                    )
+                    self.db.upsert_pin_lock_state(
+                        booking_id=rec.booking_id,
+                        lock_address=addr,
+                        lock_name=name,
+                        lock_id=lid,
+                        slot=None,
+                        pin=rec.pin,
+                        status=PinStatus.EXPIRED,
+                    )
                 result.expired_scheduled.append(rec.booking_id)
 
         # Step 5: Activate scheduled PINs entering the lead-time window
@@ -538,7 +774,10 @@ class PinProvisioner:
                 clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
                 if clients:
-                    for client in clients:
+                    for idx, client in enumerate(clients):
+                        addr, name, lid = self._client_meta(
+                            client, fallback_lock_id=rec.lock_id, idx=idx
+                        )
                         try:
                             await self._call_add_pin(
                                 client=client,
@@ -548,6 +787,15 @@ class PinProvisioner:
                                 valid_to=rec.valid_to,
                             )
                             self._record_telemetry(client)
+                            self.db.upsert_pin_lock_state(
+                                booking_id=rec.booking_id,
+                                lock_address=addr,
+                                lock_name=name,
+                                lock_id=lid,
+                                slot=slot,
+                                pin=rec.pin,
+                                status=PinStatus.PROVISIONED,
+                            )
                         except (
                             YalePinError,
                             TimeoutError,
@@ -555,11 +803,20 @@ class PinProvisioner:
                             RuntimeError,
                             ValueError,
                         ) as exc:
-                            self.allocator.release(slot)
                             msg = f"Failed to program PIN on lock for booking '{rec.booking_id}': {exc}"
                             logger.error(msg)
                             result.errors.append(msg)
                             failed = True
+                            self.db.upsert_pin_lock_state(
+                                booking_id=rec.booking_id,
+                                lock_address=addr,
+                                lock_name=name,
+                                lock_id=lid,
+                                slot=slot,
+                                pin=rec.pin,
+                                status=PinStatus.SCHEDULED,
+                                error_message=str(exc),
+                            )
                             break
 
                 if not failed:
@@ -567,6 +824,10 @@ class PinProvisioner:
                     rec.status = PinStatus.PROVISIONED
                     self.db.update_pin(rec)
                     result.activated.append(rec.booking_id)
+                else:
+                    self.allocator.release(slot)
+
+        return result
 
         return result
 

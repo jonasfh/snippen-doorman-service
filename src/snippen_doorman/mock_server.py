@@ -31,6 +31,7 @@ class MockBookingApiServer:
         self.requested_port = port
         self.bookings: list[dict[str, Any]] = []
         self.patch_calls: list[dict[str, Any]] = []
+        self.status_reports: list[dict[str, Any]] = []
         self.status_code: int = 200
         self.server: HTTPServer | None = None
         self.thread: threading.Thread | None = None
@@ -100,6 +101,45 @@ class MockBookingApiServer:
                     self.end_headers()
                     resp = {"bookings": parent.bookings}
                     self.wfile.write(json.dumps(resp).encode("utf-8"))
+                elif self.path.startswith("/wp-json/snippen/v1/door/status"):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    last_status = parent.status_reports[-1] if parent.status_reports else {}
+                    resp = {
+                        "server_time": "2026-11-07T13:20:00Z",
+                        "doorman_last_received_at": "2026-11-07T13:15:11Z",
+                        "doorman_status": last_status,
+                    }
+                    self.wfile.write(json.dumps(resp).encode("utf-8"))
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def do_POST(self) -> None:
+                if parent.status_code != 200:
+                    self.send_response(parent.status_code)
+                    self.end_headers()
+                    return
+
+                if not self._check_auth():
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+
+                if self.path.startswith("/wp-json/snippen/v1/door/status"):
+                    length = int(self.headers.get("Content-Length", 0))
+                    body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                    data = json.loads(body) if body.strip() else {}
+                    parent.status_reports.append(data)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(
+                        json.dumps({"success": True, "received_at": "2026-11-07T13:15:11Z"}).encode(
+                            "utf-8"
+                        )
+                    )
                 else:
                     self.send_response(404)
                     self.end_headers()
