@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import struct
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Self
 
 from bleak import BleakError, BleakScanner
@@ -81,6 +83,161 @@ class YaleLockState:
     is_connected: bool
 
 
+class MockLockClient:
+    """Mock lock client for simulation and testing in Docker/CI without physical BLE hardware."""
+
+    def __init__(
+        self,
+        address: str = "00:11:22:33:44:55",
+        key: str = "0123456789abcdef0123456789abcdef",
+        slot: int = 1,
+        local_name: str | None = None,
+        idle_disconnect_delay: float = 5.1,
+        lock_id: int | str | None = None,
+    ) -> None:
+        self.address = address
+        self.key = key
+        self.slot = slot
+        self.local_name = local_name
+        self.idle_disconnect_delay = idle_disconnect_delay
+        self.lock_id = str(lock_id) if lock_id is not None else None
+        self.pins: dict[int, str] = {}
+        self.disconnected = False
+        self._state = YaleLockState(
+            address=address,
+            lock_status="UNKNOWN",
+            door_status="UNKNOWN",
+            battery=None,
+            is_connected=False,
+        )
+
+    def _ensure_mock_connected(self) -> None:
+        if not self._state.is_connected and not self.disconnected:
+            self._state = YaleLockState(
+                address=self.address,
+                lock_status="locked",
+                door_status="closed",
+                battery=95,
+                is_connected=True,
+            )
+
+    @property
+    def is_running(self) -> bool:
+        return not self.disconnected
+
+    @property
+    def state(self) -> YaleLockState:
+        return self._state
+
+    async def add_pin(
+        self,
+        pin: str,
+        slot: int,
+        name: str | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
+        sync_rtc: bool = False,
+        timeout: float = 20.0,
+    ) -> YalePinCode:
+        self._ensure_mock_connected()
+        encode_packed_bcd_pin(pin)
+        if slot < 0:
+            raise ValueError("Slot must be 0 or higher.")
+        if valid_from and valid_to and valid_to < valid_from:
+            raise ValueError("valid_to cannot be earlier than valid_from.")
+
+        _LOGGER.info(
+            "[MOCK BLE] Programming PIN %s into slot %d on lock %s (valid: %s - %s)",
+            pin,
+            slot,
+            self.address,
+            valid_from,
+            valid_to,
+        )
+        self.pins[slot] = pin
+        return YalePinCode(
+            slot=slot,
+            pin=pin,
+            name=name,
+            valid_from=valid_from,
+            valid_to=valid_to,
+        )
+
+    async def delete_pin(
+        self,
+        slot: int,
+        pin: str | None = None,
+        timeout: float = 20.0,
+    ) -> bool:
+        self._ensure_mock_connected()
+        _LOGGER.info("[MOCK BLE] Deleting PIN from slot %d on lock %s", slot, self.address)
+        self.pins.pop(slot, None)
+        return True
+
+    async def list_pins(
+        self,
+        timeout: float = 20.0,
+        max_slots: int = 10,
+    ) -> list[YalePinCode]:
+        self._ensure_mock_connected()
+        return [
+            YalePinCode(slot=s, pin=p)
+            for s, p in sorted(self.pins.items())
+            if s < max_slots
+        ]
+
+    async def get_status(self, timeout: float = 15.0) -> YaleLockState:
+        self._ensure_mock_connected()
+        return self._state
+
+    async def set_rtc(
+        self,
+        timestamp: datetime | int | None = None,
+        timeout: float = 20.0,
+    ) -> int:
+        self._ensure_mock_connected()
+        _LOGGER.info("[MOCK BLE] Synchronized RTC clock on %s", self.address)
+        return int(datetime.now(UTC).timestamp())
+
+    async def lock(self, timeout: float = 20.0) -> YaleLockState:
+        self._ensure_mock_connected()
+        _LOGGER.info("[MOCK BLE] Locked %s", self.address)
+        self._state = YaleLockState(
+            address=self.address,
+            lock_status="locked",
+            door_status=self._state.door_status,
+            battery=self._state.battery or 95,
+            is_connected=True,
+        )
+        return self._state
+
+    async def unlock(self, timeout: float = 20.0) -> YaleLockState:
+        self._ensure_mock_connected()
+        _LOGGER.info("[MOCK BLE] Unlocked %s", self.address)
+        self._state = YaleLockState(
+            address=self.address,
+            lock_status="unlocked",
+            door_status=self._state.door_status,
+            battery=self._state.battery or 95,
+            is_connected=True,
+        )
+        return self._state
+
+    async def disconnect(self) -> None:
+        self.disconnected = True
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        await self.disconnect()
+
+
 class YaleLockClient:
     """High-level client for Yale Doorman BLE communication using yalexs-ble."""
 
@@ -92,6 +249,7 @@ class YaleLockClient:
         local_name: str | None = None,
         idle_disconnect_delay: float = 5.1,
         lock_id: int | str | None = None,
+        mock: bool = False,
     ) -> None:
         """Initialize the client with connection parameters and credentials.
 
@@ -102,6 +260,7 @@ class YaleLockClient:
             local_name: Optional local BLE name.
             idle_disconnect_delay: Delay before disconnecting idle BLE connection.
             lock_id: Optional WordPress Booking door lock identifier.
+            mock: If True, simulate BLE lock operations in-memory without hardware.
         """
         if not address or not address.strip():
             raise ValueError("BLE address must not be empty.")
@@ -119,6 +278,17 @@ class YaleLockClient:
         self.local_name = local_name
         self.idle_disconnect_delay = idle_disconnect_delay
         self.lock_id = str(lock_id) if lock_id is not None else None
+
+        self._mock_client: MockLockClient | None = None
+        if mock or os.getenv("SNIPPEN_DOORMAN_MOCK_BLE", "").lower() in ("1", "true", "yes"):
+            self._mock_client = MockLockClient(
+                address=self.address,
+                key=self.key,
+                slot=self.slot,
+                local_name=self.local_name,
+                idle_disconnect_delay=self.idle_disconnect_delay,
+                lock_id=self.lock_id,
+            )
 
         self._push_lock: PushLock | None = None
         self._cancel_cb: Callable[[], None] | None = None
@@ -138,6 +308,8 @@ class YaleLockClient:
     @property
     def is_running(self) -> bool:
         """Return whether the underlying PushLock is active."""
+        if self._mock_client is not None:
+            return self._mock_client.is_running
         if self._push_lock is None:
             return False
         return bool(getattr(self._push_lock, "_running", False))
@@ -145,6 +317,8 @@ class YaleLockClient:
     @property
     def state(self) -> YaleLockState:
         """Get the current known state of the lock."""
+        if self._mock_client is not None:
+            return self._mock_client.state
         lock = self._push_lock
         if lock is None:
             return YaleLockState(
@@ -206,6 +380,10 @@ class YaleLockClient:
 
     async def disconnect(self) -> None:
         """Cleanly disconnect from the lock and cancel background watchers."""
+        if self._mock_client is not None:
+            await self._mock_client.disconnect()
+            return
+
         if self._cancel_cb is not None:
             self._cancel_cb()
             self._cancel_cb = None
@@ -231,6 +409,9 @@ class YaleLockClient:
 
     async def get_status(self, timeout: float = 15.0) -> YaleLockState:
         """Connect to the lock, query its current status, and return state."""
+        if self._mock_client is not None:
+            return await self._mock_client.get_status(timeout=timeout)
+
         lock = self._get_or_create_push_lock()
         self._push_lock = lock
         _LOGGER.info("Querying lock status for %s...", self.address)
@@ -262,6 +443,9 @@ class YaleLockClient:
 
     async def lock(self, timeout: float = 20.0) -> YaleLockState:
         """Send lock command to the door lock."""
+        if self._mock_client is not None:
+            return await self._mock_client.lock(timeout=timeout)
+
         _LOGGER.info("Sending LOCK command to %s...", self.address)
         try:
             async with asyncio.timeout(timeout):
@@ -283,6 +467,8 @@ class YaleLockClient:
 
     async def unlock(self, timeout: float = 20.0) -> YaleLockState:
         """Send unlock command to the door lock."""
+        if self._mock_client is not None:
+            return await self._mock_client.unlock(timeout=timeout)
         _LOGGER.info("Sending UNLOCK command to %s...", self.address)
         try:
             async with asyncio.timeout(timeout):
@@ -343,6 +529,9 @@ class YaleLockClient:
             TimeoutError: If the BLE operation times out.
             AuthError: If authentication fails.
         """
+        if self._mock_client is not None:
+            return await self._mock_client.set_rtc(timestamp=timestamp, timeout=timeout)
+
         _LOGGER.info("Synchronizing RTC clock on %s...", self.address)
         await self._ensure_started(timeout=timeout)
         pkt = build_set_rtc_packet(timestamp)
@@ -382,6 +571,17 @@ class YaleLockClient:
             TimeoutError: If the BLE operation times out.
             AuthError: If authentication fails.
         """
+        if self._mock_client is not None:
+            return await self._mock_client.add_pin(
+                pin=pin,
+                slot=slot,
+                name=name,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                sync_rtc=sync_rtc,
+                timeout=timeout,
+            )
+
         # Validate parameters early
         encode_packed_bcd_pin(pin)  # validates digits and length 4-6
         if slot < 0:
@@ -458,6 +658,9 @@ class YaleLockClient:
             ValueError: If slot is invalid.
             YalePinError: If the lock rejects the delete operation.
         """
+        if self._mock_client is not None:
+            return await self._mock_client.delete_pin(slot=slot, pin=pin, timeout=timeout)
+
         if slot < 0:
             raise ValueError("Slot must be 0 or higher.")
 
@@ -485,6 +688,9 @@ class YaleLockClient:
         Returns:
             List of YalePinCode objects found on the lock.
         """
+        if self._mock_client is not None:
+            return await self._mock_client.list_pins(timeout=timeout, max_slots=max_slots)
+
         _LOGGER.info("Listing PINs on %s (scanning up to %d slots)...", self.address, max_slots)
         await self._ensure_started(timeout=timeout)
         pins: list[YalePinCode] = []
@@ -508,3 +714,42 @@ class YaleLockClient:
                 continue
 
         return pins
+
+
+def create_lock_client(
+    address: str,
+    key: str,
+    slot: int = 1,
+    local_name: str | None = None,
+    idle_disconnect_delay: float = 5.1,
+    lock_id: int | str | None = None,
+    mock: bool | None = None,
+) -> YaleLockClient | MockLockClient:
+    """Create a lock client, choosing MockLockClient if mock mode is requested or if BlueZ D-Bus is unavailable."""
+    if mock is None:
+        mock = os.getenv("SNIPPEN_DOORMAN_MOCK_BLE", "").lower() in ("1", "true", "yes")
+        if not mock and (sys.platform.startswith("linux") and not os.path.exists("/var/run/dbus/system_bus_socket")):
+            _LOGGER.info(
+                "BlueZ D-Bus socket not found (/var/run/dbus/system_bus_socket). "
+                "Initializing lock client %s in mock/simulation mode.",
+                address,
+            )
+            mock = True
+
+    if mock:
+        return MockLockClient(
+            address=address,
+            key=key,
+            slot=slot,
+            local_name=local_name,
+            idle_disconnect_delay=idle_disconnect_delay,
+            lock_id=lock_id,
+        )
+    return YaleLockClient(
+        address=address,
+        key=key,
+        slot=slot,
+        local_name=local_name,
+        idle_disconnect_delay=idle_disconnect_delay,
+        lock_id=lock_id,
+    )

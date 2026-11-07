@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.20.0] - 2026-11-07
+## [0.21.0] - 2026-11-07
+
+### Added
+- Mock lock client mode (`MockLockClient`) and factory `create_lock_client` in `snippen_doorman.ble` (#28): Enables running the Doorman service in Docker, CI, and hardware-less environments without throwing D-Bus / BlueZ errors (`FileNotFoundError` on `/var/run/dbus/system_bus_socket`), with automatic fallback or explicit toggle via `SNIPPEN_DOORMAN_MOCK_BLE=1`.
+- YaleLockClient delegation support: Added optional `mock=True` parameter to `YaleLockClient` delegating all operations (`add_pin`, `delete_pin`, `get_status`, `set_rtc`, `lock`, `unlock`, `list_pins`) to `MockLockClient` seamlessly.
+
+### Changed
+- Extended standard default lead-time to 2 days / 2880 minutes (`SNIPPEN_PIN_LEAD_TIME_MINUTES=2880` / `SNIPPEN_LEAD_TIME_MINUTES=2880`) in `provisioner.py`, `config_manager.py`, `main.py`, and `default.env`, staging upcoming reservations within 48 hours for lock programming while keeping future bookings scheduled in the database (#28).
+
 
 ### Added
 - Multi-node and multi-service identity resolution (`node_identity.py`) (#76): Implemented deterministic node identification supporting independent Doorman gateways reporting to the same WordPress Booking instance without collision.

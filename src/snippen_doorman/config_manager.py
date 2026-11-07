@@ -37,7 +37,7 @@ class DoormanConfig:
     service_id: str | None = None
     service_name: str | None = None
     locks: list[LockSetting] = field(default_factory=list)
-    lead_time_minutes: int = 60
+    lead_time_minutes: int = 2880
     grace_period_minutes: int = 15
     sync_interval_seconds: float = 60.0
     heartbeat_interval_hours: float = 24.0
@@ -92,9 +92,18 @@ class ConfigManager:
         service_name = service_name_raw.strip() if service_name_raw.strip() else None
 
         try:
-            lead_time = int(get_val("SNIPPEN_LEAD_TIME_MINUTES", "60"))
+            if "SNIPPEN_LEAD_TIME_MINUTES" in env_map:
+                lead_time_str = env_map["SNIPPEN_LEAD_TIME_MINUTES"]
+            elif "SNIPPEN_PIN_LEAD_TIME_MINUTES" in env_map:
+                lead_time_str = env_map["SNIPPEN_PIN_LEAD_TIME_MINUTES"]
+            else:
+                lead_time_str = os.getenv(
+                    "SNIPPEN_PIN_LEAD_TIME_MINUTES",
+                    os.getenv("SNIPPEN_LEAD_TIME_MINUTES", "2880"),
+                )
+            lead_time = int(lead_time_str)
         except ValueError:
-            lead_time = 60
+            lead_time = 2880
 
         try:
             grace_period = int(get_val("SNIPPEN_GRACE_PERIOD_MINUTES", "15"))
@@ -273,6 +282,7 @@ class ConfigManager:
                 if lt < 0:
                     raise ValueError
                 new_env_entries["SNIPPEN_LEAD_TIME_MINUTES"] = str(lt)
+                new_env_entries["SNIPPEN_PIN_LEAD_TIME_MINUTES"] = str(lt)
             except (ValueError, TypeError):
                 errors.append("Lead time må være et positivt heltall.")
 

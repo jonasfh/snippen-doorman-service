@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from snippen_doorman import __version__
-from snippen_doorman.ble.client import YaleLockClient
+from snippen_doorman.ble.client import create_lock_client
 from snippen_doorman.ble.wifi_peripheral import BleWifiPeripheral
 from snippen_doorman.booking_client import SnippenBookingClient
 from snippen_doorman.config_manager import ConfigManager
@@ -614,7 +614,7 @@ class DoormanWebServer:
                     lk = cfg.locks[0]
                     parent.record_event(f"Sender test-opplåsingssignal til {lk.name}...")
                     try:
-                        client = YaleLockClient(address=lk.address, key=lk.key, slot=lk.slot)
+                        client = create_lock_client(address=lk.address, key=lk.key, slot=lk.slot)
 
                         async def _unlock() -> Any:
                             async with client:
@@ -657,7 +657,7 @@ class DoormanWebServer:
                     lk = cfg.locks[0]
                     parent.record_event(f"Sender test-låsesignal til {lk.name}...")
                     try:
-                        client = YaleLockClient(address=lk.address, key=lk.key, slot=lk.slot)
+                        client = create_lock_client(address=lk.address, key=lk.key, slot=lk.slot)
 
                         async def _lock() -> Any:
                             async with client:
@@ -700,7 +700,7 @@ class DoormanWebServer:
                     lk = cfg.locks[0]
                     parent.record_event(f"Kobler til {lk.name} for å hente batterinivå...")
                     try:
-                        client = YaleLockClient(address=lk.address, key=lk.key, slot=lk.slot)
+                        client = create_lock_client(address=lk.address, key=lk.key, slot=lk.slot)
 
                         async def _get_status() -> Any:
                             async with client:
