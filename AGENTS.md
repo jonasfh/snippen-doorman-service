@@ -32,6 +32,13 @@ Guide AI agents working in this repository.
 - 🧪 **[Quality & Testing Principles](file:///.agents/common-agent-instructions/TESTING.md)**: Automated test requirements, zero-linting policy, and formatting hygiene.
 - 📐 **[Common Architecture](file:///.agents/common-agent-instructions/ARCHITECTURE.md)**: Modularity, decoupling, and universal database timestamp rules.
 
+### Python Submodule Guidelines
+- 🛠️ **[Python Environment & Tooling](file:///.agents/python-agent-instructions/PYTHON_ENVIRONMENT_AND_TOOLING.md)**: Virtual environment management (`uv`, `poetry`, `venv`), dependency locking via `pyproject.toml`, and automated code formatting with `ruff`.
+- 🏷️ **[Python Typing & Style](file:///.agents/python-agent-instructions/PYTHON_TYPING_AND_STYLE.md)**: Strict type hints (PEP 484/585/604), data modeling with Pydantic v2 and dataclasses, and zero dynamic `Any`.
+- 🧪 **[Python Testing & QA](file:///.agents/python-agent-instructions/PYTHON_TESTING.md)**: Unit and integration testing with `pytest`, async test patterns (`pytest-asyncio`), test isolation, and static type checking with `mypy` / `pyright`.
+- 📐 **[Python Architecture](file:///.agents/python-agent-instructions/PYTHON_ARCHITECTURE.md)**: Asynchronous programming (`asyncio`), `src/` layout, modularity, explicit interfaces, and deterministic execution principles.
+- 📝 **[Python Documentation](file:///.agents/python-agent-instructions/PYTHON_DOCUMENTATION.md)**: Google-style docstrings (PEP 257), type hints as executable documentation, and synchronization rules.
+
 ### Project-Specific Guidelines
 - 🐍 **[Project Architecture & Tech Stack](file:///.agents/ARCHITECTURE.md)**: Python tech stack, directory structure, module layout, and async I/O.
 - 🧪 **[Python Testing & Quality Commands](file:///.agents/TESTING.md)**: Running `pytest`, `ruff`, formatting (`scripts/format.py`), and PR validation (`scripts/validate_pr.py`).
