@@ -100,17 +100,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="logo-area">
         <div class="logo-icon">🚪</div>
         <div>
-          <h1>Snippen Doorman Gateway</h1>
-          <div style="font-size: 0.75rem; color: var(--text-muted);">Adgangskontroll for Yale Doorman Classic over BLE</div>
+          <h1 id="header-title">Snippen Doorman Gateway</h1>
+          <div style="font-size: 0.75rem; color: var(--text-muted);" id="header-subtitle">Adgangskontroll for Yale Doorman Classic over BLE</div>
         </div>
       </div>
-      <div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
         <span class="status-pill">
           <span class="pulse-dot"></span>
           <span id="header-status">Tilkoblet</span>
         </span>
+        <div style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">
+          <span id="header-node-id">-</span> &bull; <span id="header-node-ip">-</span>
+        </div>
       </div>
     </header>
+
+    <div class="node-identity-banner" style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.7); border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 16px; margin-bottom: 16px; font-size: 0.82rem;">
+      <div><span style="color: var(--text-muted);">Node ID:</span> <strong id="top-node-id" style="font-family: monospace; color: var(--accent);">-</strong></div>
+      <div><span style="color: var(--text-muted);">Visningsnavn:</span> <strong id="top-node-name">-</strong></div>
+      <div><span style="color: var(--text-muted);">Lokal IP:</span> <strong id="top-node-ip" style="font-family: monospace;">-</strong></div>
+      <div><span style="color: var(--text-muted);">Nettverks-MAC:</span> <strong id="top-node-mac" style="font-family: monospace;">-</strong></div>
+    </div>
 
     <nav>
       <button class="nav-btn active" onclick="showTab('status', this)">📊 Oversikt & Test</button>
@@ -125,9 +135,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="grid-2">
         <!-- System Status -->
         <div class="card">
-          <div class="card-title">🖥️ Gateway Status</div>
+          <div class="card-title">🖥️ Gateway & Node Status</div>
+          <div class="stat-row"><span class="stat-label">Service ID:</span><span class="stat-val" id="sys-service-id" style="font-family: monospace;">-</span></div>
+          <div class="stat-row"><span class="stat-label">Visningsnavn:</span><span class="stat-val" id="sys-service-name">-</span></div>
           <div class="stat-row"><span class="stat-label">Vertsnavn:</span><span class="stat-val" id="sys-hostname">-</span></div>
           <div class="stat-row"><span class="stat-label">Lokal IP:</span><span class="stat-val" id="sys-ip">-</span></div>
+          <div class="stat-row"><span class="stat-label">Nettverks-MAC:</span><span class="stat-val" id="sys-mac" style="font-family: monospace;">-</span></div>
           <div class="stat-row"><span class="stat-label">WiFi Nettverk:</span><span class="stat-val" id="sys-wifi">-</span></div>
           <div class="stat-row"><span class="stat-label">Oppetid:</span><span class="stat-val" id="sys-uptime">-</span></div>
           <div class="stat-row"><span class="stat-label">Sikkerhet:</span><span class="stat-val" id="sys-tls">-</span></div>
@@ -410,6 +423,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const res = await fetch('/api/status');
         if (!res.ok) return;
         const data = await res.json();
+
+        if (data.service_id) {
+          const topId = document.getElementById('top-node-id');
+          if (topId) topId.textContent = data.service_id;
+          const hdrId = document.getElementById('header-node-id');
+          if (hdrId) hdrId.textContent = data.service_id;
+          const sysId = document.getElementById('sys-service-id');
+          if (sysId) sysId.textContent = data.service_id;
+        }
+        if (data.service_name) {
+          const topName = document.getElementById('top-node-name');
+          if (topName) topName.textContent = data.service_name;
+          const sysName = document.getElementById('sys-service-name');
+          if (sysName) sysName.textContent = data.service_name;
+          const hdrTitle = document.getElementById('header-title');
+          if (hdrTitle && data.service_name) hdrTitle.textContent = data.service_name;
+        }
+        if (data.ip) {
+          const topIp = document.getElementById('top-node-ip');
+          if (topIp) topIp.textContent = data.ip;
+          const hdrIp = document.getElementById('header-node-ip');
+          if (hdrIp) hdrIp.textContent = data.ip;
+          const sysIp = document.getElementById('sys-ip');
+          if (sysIp) sysIp.textContent = data.ip;
+        }
+        if (data.mac_address) {
+          const topMac = document.getElementById('top-node-mac');
+          if (topMac) topMac.textContent = data.mac_address;
+          const sysMac = document.getElementById('sys-mac');
+          if (sysMac) sysMac.textContent = data.mac_address;
+        }
 
         document.getElementById('sys-hostname').textContent = data.hostname || '-';
         document.getElementById('sys-ip').textContent = data.ip || '-';

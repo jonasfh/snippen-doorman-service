@@ -66,9 +66,22 @@ def test_web_server_endpoints(tmp_path) -> None:
             data = json.loads(res.read().decode("utf-8"))
             assert "hostname" in data
             assert "ip" in data
+            assert "service_id" in data
+            assert "service" in data
+            assert data["service"]["id"] == data["service_id"]
             assert data["primary_lock"]["address"] == "98:1B:B5:0B:BB:35"
             assert "ble_setup_active" in data
             assert "ble_setup_remaining_seconds" in data
+
+        # 2b. GET /api/status/full (issue #75, #76)
+        with urlopen(f"{base_url}/api/status/full") as res:
+            assert res.status == 200
+            full_data = json.loads(res.read().decode("utf-8"))
+            assert "service_id" in full_data
+            assert "service" in full_data
+            assert full_data["service"]["id"] == full_data["service_id"]
+            assert "reservations_in_db" in full_data
+            assert "locks" in full_data
 
         # 3. GET /api/config
         with urlopen(f"{base_url}/api/config") as res:

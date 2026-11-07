@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 
 from snippen_doorman.allocator import NoSlotsAvailableError, SlotAllocator
 from snippen_doorman.booking_client import (
@@ -15,6 +15,11 @@ from snippen_doorman.booking_client import (
 )
 from snippen_doorman.db import Database, LockStatusRecord, PinRecord, PinStatus
 from snippen_doorman.mock_server import MockBookingApiServer
+from snippen_doorman.node_identity import (
+    NodeIdentity,
+    get_mac_address,
+    resolve_node_identity,
+)
 from snippen_doorman.poller import BookingPoller, PollTickResult
 from snippen_doorman.provisioner import (
     PinProvisioner,
@@ -45,6 +50,7 @@ __all__ = [
     "LockStatusRecord",
     "MockBookingApiServer",
     "NoSlotsAvailableError",
+    "NodeIdentity",
     "PinProvisioner",
     "PinRecord",
     "PinStatus",
@@ -60,5 +66,7 @@ __all__ = [
     "SyncTickResult",
     "__version__",
     "create_reservation_store",
+    "get_mac_address",
+    "resolve_node_identity",
     "run_provisioning_scheduler",
 ]

@@ -33,7 +33,8 @@ The doorman service can be configured via CLI flags or environment variables:
 
 | Setting | Environment Variable | Default | Description |
 | :--- | :--- | :--- | :--- |
-| Service Name | `SNIPPEN_DOORMAN_SERVICE_NAME` | `snippen-doorman-service` | Name of the service instance |
+| Service ID | `SNIPPEN_DOORMAN_SERVICE_ID` | `doorman-<mac>` / hostname | Unique identifier for this service node (#76) |
+| Service Name | `SNIPPEN_DOORMAN_SERVICE_NAME` | `Doorman (<service_id>)` | Human-readable display name (e.g. "Grendehuset (Hovedbygg)") (#76) |
 | Log Level | `SNIPPEN_DOORMAN_LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | Database Path | `SNIPPEN_DOORMAN_DATABASE_PATH` | `data/doorman.db` | Path to SQLite database file (or `:memory:`) |
 | Door Lock Module URL | `SNIPPEN_DOORMAN_MODULE_URL` | *(None)* | URL to the Yale Doorman access module |
@@ -216,6 +217,8 @@ Access the dashboard at `https://snippen-doorman-service.local:8080` (or `https:
 ### Multi-Node Deployments & Independent Rental Units
 
 For estates with independent rental units (e.g. Grendehuset vs. Hybel) operating beyond mutual BLE radio coverage, multiple independent Doorman nodes can run in parallel:
+- Each node reports its deterministic identity (`service_id` via `SNIPPEN_DOORMAN_SERVICE_ID`, fallback to `doorman-<mac>`), display name (`service_name`), local IP, and MAC address (#76).
+- Status payloads to WordPress (`POST /wp-json/snippen/v1/door/status`) include `service_id` at the top level and a full `service` metadata object, preventing collision in central fleet dashboards (#76).
 - Each node scopes synchronization using its designated `SNIPPEN_DOORMAN_LOCK_ID`.
 - PIN codes are fully isolated between rental units with zero cross-leakage.
 - See [docs/multi_node_architecture.md](docs/multi_node_architecture.md) for full architectural blueprints, ESP32 micro-bridge options, and central fleet monitoring.

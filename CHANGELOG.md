@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-11-07
+
+### Added
+- Multi-node and multi-service identity resolution (`node_identity.py`) (#76): Implemented deterministic node identification supporting independent Doorman gateways reporting to the same WordPress Booking instance without collision.
+- Automatic hardware MAC and local IP detection (#76): Detects primary Ethernet/Wi-Fi MAC address (`mac_address`) and local IPv4 address (`ip_address`), with fallback to `uuid.getnode()` and local socket address.
+- Configurable `service_id` and `service_name` (#76): Configurable via CLI flags (`--service-id`, `--service-name`), environment variables (`SNIPPEN_DOORMAN_SERVICE_ID`, `SNIPPEN_DOORMAN_SERVICE_NAME`), or Web Dashboard configuration, with automatic fallback to hardware MAC slug (`doorman-<mac>`) or hostname.
+- Extended status reporting contract (#76): Extended `build_full_status_payload` and `DoormanSyncEngine` to include `service_id` at the top level and a full `service` metadata object (`id`, `name`, `version`, `hostname`, `ip_address`, `mac_address`, `lock_ids`) in `POST /wp-json/snippen/v1/door/status` and `GET /api/status/full`.
+- Node identity UI in Web Dashboard and CLI (#76): Displaying service ID, display name, IP address, and MAC address in `snippen-doorman service status`, the Web Dashboard header banner, and the Gateway & Node Status panel.
+
 ## [0.19.0] - 2026-11-07
 
 ### Added

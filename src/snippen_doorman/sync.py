@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from snippen_doorman.db import Database
+from snippen_doorman.node_identity import NodeIdentity, resolve_node_identity
 from snippen_doorman.poller import BookingPoller, PollTickResult
 from snippen_doorman.provisioner import PinProvisioner, ProvisionTickResult
 from snippen_doorman.state.base import ReservationStore
@@ -44,6 +45,9 @@ class DoormanSyncEngine:
         lock_id: str | int | None = "default",
         lock_ids: list[str | int] | None = None,
         heartbeat_interval_hours: float = 24.0,
+        service_id: str | None = None,
+        service_name: str | None = None,
+        node_identity: NodeIdentity | None = None,
     ) -> None:
         """Initialize synchronization engine.
 
@@ -55,6 +59,9 @@ class DoormanSyncEngine:
             lock_id: Identifier for target lock (default: 'default').
             lock_ids: Optional list of lock IDs to poll for multi-door setups.
             heartbeat_interval_hours: Interval in hours for periodic RTC sync and telemetry (default: 24.0).
+            service_id: Optional service ID override (issue #76).
+            service_name: Optional service display name override (issue #76).
+            node_identity: Optional pre-resolved NodeIdentity instance.
         """
         self.poller = poller
         self.provisioner = provisioner
@@ -67,6 +74,16 @@ class DoormanSyncEngine:
             else None
         )
         self.heartbeat_interval_hours = heartbeat_interval_hours
+        self.service_id = str(service_id).strip() if service_id else None
+        self.service_name = str(service_name).strip() if service_name else None
+        if node_identity is not None:
+            self.node_identity = node_identity
+        else:
+            self.node_identity = resolve_node_identity(
+                service_id=self.service_id,
+                service_name=self.service_name,
+                lock_ids=self.lock_ids or ([self.lock_id] if self.lock_id != "default" else None),
+            )
         self._last_lock_heartbeat: dict[str, datetime] = {}
         self._network_down: bool = False
 
@@ -272,7 +289,7 @@ class DoormanSyncEngine:
                 logger.error(msg)
                 result.errors.append(msg)
 
-        # Step 5: Build full JSON status and push to Snippen Booking API (#75)
+        # Step 5: Build full JSON status and push to Snippen Booking API (#75, #76)
         try:
             lock_clients = await self.provisioner._get_lock_clients()
             full_status = build_full_status_payload(
@@ -280,6 +297,7 @@ class DoormanSyncEngine:
                 store=self.store,
                 lock_clients=lock_clients,
                 now=now,
+                node_identity=self.node_identity,
             )
             result.full_status = full_status
 
