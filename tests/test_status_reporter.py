@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
+from snippen_doorman import __version__
 from snippen_doorman.ble.lock_config import LockConfig
 from snippen_doorman.db import Database, PinStatus
 from snippen_doorman.state import InMemoryReservationStore
@@ -212,7 +213,7 @@ def test_build_full_status_payload_with_explicit_service_identity():
     assert payload["service_id"] == "grendehus-node"
     assert payload["service"]["id"] == "grendehus-node"
     assert payload["service"]["name"] == "Grendehuset (Hovedbygg)"
-    assert payload["service"]["version"] == "0.20.0"
+    assert payload["service"]["version"] == __version__
     assert "hostname" in payload["service"]
     assert "ip_address" in payload["service"]
     assert "mac_address" in payload["service"]

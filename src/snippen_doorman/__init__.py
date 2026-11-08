@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 
 from snippen_doorman.allocator import NoSlotsAvailableError, SlotAllocator
 from snippen_doorman.booking_client import (

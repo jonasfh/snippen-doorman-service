@@ -969,13 +969,13 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p.add_argument(
             "--web-host",
-            default="0.0.0.0",
+            default=os.getenv("SNIPPEN_DOORMAN_WEB_HOST", "0.0.0.0"),
             help="Web dashboard host (default: 0.0.0.0)",
         )
         p.add_argument(
             "--web-port",
             type=int,
-            default=8080,
+            default=int(os.getenv("SNIPPEN_DOORMAN_WEB_PORT", "8080")),
             help="Web dashboard port (default: 8080)",
         )
         default_tls = os.getenv("SNIPPEN_DOORMAN_WEB_TLS", "true").lower() in ("1", "true", "yes")
@@ -1030,8 +1030,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     # web subcommand
     web_parser = subparsers.add_parser("web", help="Start local web dashboard")
-    web_parser.add_argument("--host", default="0.0.0.0", help="Web host (default: 0.0.0.0)")
-    web_parser.add_argument("--port", type=int, default=8080, help="Web port (default: 8080)")
+    web_parser.add_argument(
+        "--host",
+        default=os.getenv("SNIPPEN_DOORMAN_WEB_HOST", "0.0.0.0"),
+        help="Web host (default: 0.0.0.0)",
+    )
+    web_parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("SNIPPEN_DOORMAN_WEB_PORT", "8080")),
+        help="Web port (default: 8080)",
+    )
     web_parser.add_argument("--env-file", default=None, help="Path to env configuration file")
     default_web_tls = os.getenv("SNIPPEN_DOORMAN_WEB_TLS", "true").lower() in ("1", "true", "yes")
     web_parser.add_argument(

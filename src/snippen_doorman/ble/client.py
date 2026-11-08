@@ -180,11 +180,7 @@ class MockLockClient:
         max_slots: int = 10,
     ) -> list[YalePinCode]:
         self._ensure_mock_connected()
-        return [
-            YalePinCode(slot=s, pin=p)
-            for s, p in sorted(self.pins.items())
-            if s < max_slots
-        ]
+        return [YalePinCode(slot=s, pin=p) for s, p in sorted(self.pins.items()) if s < max_slots]
 
     async def get_status(self, timeout: float = 15.0) -> YaleLockState:
         self._ensure_mock_connected()
@@ -355,7 +351,7 @@ class YaleLockClient:
         """Ensure PushLock is started, associated with a BLE device, and initialized."""
         lock = self._get_or_create_push_lock()
         self._push_lock = lock
-        if not getattr(lock, "_running", False):
+        if not getattr(lock, "_running", False) or getattr(lock, "_ble_device", None) is None:
             # Ensure the BLE device is discovered and attached to the lock watcher
             if hasattr(lock, "_ble_device") and lock._ble_device is None:
                 device = await get_device(self.address)
@@ -365,8 +361,15 @@ class YaleLockClient:
                     )
                 if device is not None:
                     lock.set_ble_device(device)
+                else:
+                    if self._cancel_cb is not None:
+                        self._cancel_cb()
+                        self._cancel_cb = None
+                    if hasattr(lock, "_running"):
+                        lock._running = False
+                    raise YaleXSBLEError(f"Device {self.address} not discovered in Bluetooth scan")
 
-            if hasattr(lock, "start"):
+            if hasattr(lock, "start") and not getattr(lock, "_running", False):
                 start_result = lock.start()
                 if asyncio.iscoroutine(start_result):
                     self._cancel_cb = await start_result
@@ -374,7 +377,11 @@ class YaleLockClient:
                     self._cancel_cb = start_result
 
             if getattr(lock, "_first_update_future", None):
-                await lock.wait_for_first_update(timeout=timeout)
+                try:
+                    await lock.wait_for_first_update(timeout=timeout)
+                except Exception:
+                    await self.disconnect()
+                    raise
 
         return lock
 
@@ -388,11 +395,14 @@ class YaleLockClient:
             self._cancel_cb()
             self._cancel_cb = None
 
-        if self._push_lock is not None and hasattr(self._push_lock, "_execute_forced_disconnect"):
-            try:
-                await self._push_lock._execute_forced_disconnect("client disconnect")
-            except (BleakError, YaleXSBLEError, OSError) as exc:
-                _LOGGER.debug("Non-fatal error disconnecting lock %s: %s", self.address, exc)
+        if self._push_lock is not None:
+            if hasattr(self._push_lock, "_running"):
+                self._push_lock._running = False
+            if hasattr(self._push_lock, "_execute_forced_disconnect"):
+                try:
+                    await self._push_lock._execute_forced_disconnect("client disconnect")
+                except (BleakError, YaleXSBLEError, OSError) as exc:
+                    _LOGGER.debug("Non-fatal error disconnecting lock %s: %s", self.address, exc)
 
     async def __aenter__(self) -> Self:
         """Context manager entry."""
@@ -498,6 +508,10 @@ class YaleLockClient:
         """Send raw August packet over the authenticated session and return response."""
         async with asyncio.timeout(timeout):
             lock = await self._ensure_started(timeout=timeout)
+            if hasattr(lock, "_ble_device") and lock._ble_device is None:
+                raise YaleXSBLEError(
+                    f"Cannot execute raw command on {self.address}: BLE device not discovered"
+                )
             connected_lock = await lock._ensure_connected()
             session = getattr(connected_lock, "session", None)
             if session is None:
@@ -728,7 +742,10 @@ def create_lock_client(
     """Create a lock client, choosing MockLockClient if mock mode is requested or if BlueZ D-Bus is unavailable."""
     if mock is None:
         mock = os.getenv("SNIPPEN_DOORMAN_MOCK_BLE", "").lower() in ("1", "true", "yes")
-        if not mock and (sys.platform.startswith("linux") and not os.path.exists("/var/run/dbus/system_bus_socket")):
+        if not mock and (
+            sys.platform.startswith("linux")
+            and not os.path.exists("/var/run/dbus/system_bus_socket")
+        ):
             _LOGGER.info(
                 "BlueZ D-Bus socket not found (/var/run/dbus/system_bus_socket). "
                 "Initializing lock client %s in mock/simulation mode.",
