@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from snippen_doorman.db import Database
 from snippen_doorman.node_identity import NodeIdentity, resolve_node_identity
@@ -15,6 +15,9 @@ from snippen_doorman.provisioner import PinProvisioner, ProvisionTickResult
 from snippen_doorman.state.base import ReservationStore
 from snippen_doorman.state.models import ReservationStatus
 from snippen_doorman.status_reporter import build_full_status_payload
+
+if TYPE_CHECKING:
+    from snippen_doorman.wifi_manager import WifiManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,7 @@ class DoormanSyncEngine:
         service_id: str | None = None,
         service_name: str | None = None,
         node_identity: NodeIdentity | None = None,
+        wifi_manager: WifiManager | None = None,
     ) -> None:
         """Initialize synchronization engine.
 
@@ -62,11 +66,13 @@ class DoormanSyncEngine:
             service_id: Optional service ID override (issue #76).
             service_name: Optional service display name override (issue #76).
             node_identity: Optional pre-resolved NodeIdentity instance.
+            wifi_manager: Optional WifiManager instance for active Wi-Fi rescanning when offline.
         """
         self.poller = poller
         self.provisioner = provisioner
         self.store = store
         self.db = db
+        self.wifi_manager = wifi_manager
         self.lock_id = str(lock_id) if lock_id is not None else "default"
         self.lock_ids = (
             list(dict.fromkeys(str(lid) for lid in lock_ids if lid is not None))
@@ -86,6 +92,15 @@ class DoormanSyncEngine:
             )
         self._last_lock_heartbeat: dict[str, datetime] = {}
         self._network_down: bool = False
+        self._trigger_event: asyncio.Event | None = None
+
+    def trigger_immediate_sync(self) -> None:
+        """Signal the synchronization daemon loop to execute an immediate sync cycle."""
+        if self._trigger_event is not None:
+            logger.info("Immediate sync requested via trigger event.")
+            self._trigger_event.set()
+        else:
+            logger.debug("Immediate sync requested but no trigger event is registered.")
 
     async def sync_once(self, now: datetime | None = None) -> SyncTickResult:
         """Execute a full synchronization cycle: poll remote, reconcile queues, and provision lock.
@@ -317,18 +332,27 @@ class DoormanSyncEngine:
         self,
         interval_seconds: float = 60.0,
         stop_event: asyncio.Event | None = None,
+        trigger_event: asyncio.Event | None = None,
+        offline_retry_interval: float = 10.0,
     ) -> None:
         """Run periodic synchronization daemon until stop_event is signaled.
 
         Args:
-            interval_seconds: Polling interval between sync cycles.
+            interval_seconds: Polling interval between sync cycles when online.
             stop_event: Optional asyncio.Event for graceful termination.
+            trigger_event: Optional asyncio.Event to trigger an immediate sync tick.
+            offline_retry_interval: Shorter polling interval used when network is down.
         """
         logger.info(
-            "Starting DoormanSyncEngine loop (interval: %.1fs, lock_id: %s)",
+            "Starting DoormanSyncEngine loop (interval: %.1fs, offline_retry: %.1fs, lock_id: %s)",
             interval_seconds,
+            offline_retry_interval,
             self.lock_id,
         )
+
+        if trigger_event is None:
+            trigger_event = asyncio.Event()
+        self._trigger_event = trigger_event
 
         while stop_event is None or not stop_event.is_set():
             try:
@@ -357,13 +381,42 @@ class DoormanSyncEngine:
             except Exception:
                 logger.exception("Unexpected exception in sync loop")
 
-            if stop_event is not None:
+            if stop_event is not None and stop_event.is_set():
+                break
+
+            if self._network_down and self.wifi_manager is not None:
                 try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+                    await asyncio.to_thread(self.wifi_manager.rescan)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Background wifi rescan failed: %s", exc)
+
+            effective_wait = offline_retry_interval if self._network_down else interval_seconds
+
+            wait_tasks: list[asyncio.Task[bool]] = []
+            if stop_event is not None:
+                wait_tasks.append(asyncio.create_task(stop_event.wait()))
+            wait_tasks.append(asyncio.create_task(trigger_event.wait()))
+
+            try:
+                _done, pending = await asyncio.wait(
+                    wait_tasks,
+                    timeout=effective_wait,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+
+                if stop_event is not None and stop_event.is_set():
                     break
-                except TimeoutError:
-                    continue
-            else:
-                await asyncio.sleep(interval_seconds)
+
+                if trigger_event.is_set():
+                    logger.info("Trigger event received: initiating immediate synchronization.")
+                    trigger_event.clear()
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+            except Exception as wait_exc:  # noqa: BLE001
+                logger.debug("Exception waiting for loop trigger: %s", wait_exc)
 
         logger.info("DoormanSyncEngine loop terminated cleanly.")

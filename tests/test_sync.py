@@ -944,3 +944,126 @@ async def test_sync_engine_custom_service_identity(sync_env):
     assert res.full_status["service"]["id"] == "hybel-vest-node"
     assert res.full_status["service"]["name"] == "Hybel Vest (Sokkelleilighet)"
     assert res.full_status["service"]["lock_ids"] == ["2"]
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_trigger_immediate_sync() -> None:
+    """Test DoormanSyncEngine trigger_immediate_sync method."""
+    import asyncio
+
+    engine = DoormanSyncEngine(
+        poller=MagicMock(),
+        provisioner=MagicMock(),
+        store=MagicMock(),
+        db=MagicMock(),
+    )
+    # When no trigger_event registered
+    engine.trigger_immediate_sync()
+
+    # When trigger_event is registered
+    trigger = asyncio.Event()
+    engine._trigger_event = trigger
+    assert not trigger.is_set()
+
+    engine.trigger_immediate_sync()
+    assert trigger.is_set()
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_run_loop_with_trigger_event(sync_env) -> None:
+    """Test run_loop immediate wake-up upon trigger_event."""
+    import asyncio
+
+    engine = DoormanSyncEngine(
+        poller=sync_env["poller"],
+        provisioner=sync_env["provisioner"],
+        store=sync_env["store"],
+        db=sync_env["db"],
+    )
+
+    sync_calls = 0
+    original_sync_once = engine.sync_once
+
+    async def fake_sync_once(now=None):
+        nonlocal sync_calls
+        sync_calls += 1
+        return await original_sync_once(now=now)
+
+    engine.sync_once = fake_sync_once  # type: ignore[assignment]
+
+    stop_event = asyncio.Event()
+    trigger_event = asyncio.Event()
+
+    async def trigger_and_stop():
+        # Wait a tiny moment for loop to start and finish first sync
+        while sync_calls < 1:
+            await asyncio.sleep(0.01)
+        # Fire immediate sync trigger
+        engine.trigger_immediate_sync()
+        # Wait for second sync call
+        while sync_calls < 2:
+            await asyncio.sleep(0.01)
+        # Terminate loop
+        stop_event.set()
+
+    asyncio.create_task(trigger_and_stop())
+
+    # High interval (60s) to prove it was woken by trigger_event, not timeout
+    await engine.run_loop(
+        interval_seconds=60.0,
+        stop_event=stop_event,
+        trigger_event=trigger_event,
+    )
+
+    assert sync_calls >= 2
+
+
+@pytest.mark.asyncio
+async def test_sync_engine_run_loop_offline_adaptive_and_wifi_rescan(sync_env) -> None:
+    """Test run_loop offline retry interval and background wifi rescan."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    mock_wifi = MagicMock()
+    mock_wifi.rescan.return_value = True
+
+    engine = DoormanSyncEngine(
+        poller=sync_env["poller"],
+        provisioner=sync_env["provisioner"],
+        store=sync_env["store"],
+        db=sync_env["db"],
+        wifi_manager=mock_wifi,
+    )
+
+    # Force network down state
+    engine._network_down = True
+
+    sync_calls = 0
+
+    async def fake_sync_once(now=None):
+        nonlocal sync_calls
+        sync_calls += 1
+        from snippen_doorman.sync import SyncTickResult
+
+        return SyncTickResult()
+
+    engine.sync_once = fake_sync_once  # type: ignore[assignment]
+
+    stop_event = asyncio.Event()
+
+    async def stop_after_delay():
+        while sync_calls < 2:
+            await asyncio.sleep(0.01)
+        stop_event.set()
+
+    asyncio.create_task(stop_after_delay())
+
+    # Fast offline retry (0.05s) vs long online interval (100s)
+    await engine.run_loop(
+        interval_seconds=100.0,
+        stop_event=stop_event,
+        offline_retry_interval=0.05,
+    )
+
+    assert sync_calls >= 2
+    assert mock_wifi.rescan.called

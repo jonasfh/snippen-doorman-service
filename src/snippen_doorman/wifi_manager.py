@@ -26,6 +26,28 @@ class WifiManager:
         """Return True if nmcli command is available on host system."""
         return shutil.which("nmcli") is not None
 
+    def rescan(self) -> bool:
+        """Trigger an active WiFi rescan via nmcli if available.
+
+        Returns:
+            True if rescan was initiated successfully, False otherwise.
+        """
+        if not self.is_available:
+            return False
+
+        try:
+            res = subprocess.run(
+                ["nmcli", "device", "wifi", "rescan"],
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+                check=False,
+            )
+            return res.returncode == 0
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.debug("Failed to trigger nmcli wifi rescan: %s", exc)
+            return False
+
     def list_networks(self, rescan: bool = True) -> list[dict[str, Any]]:
         """Scan for available wireless networks.
 

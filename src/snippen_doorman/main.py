@@ -24,6 +24,7 @@ from snippen_doorman.provisioner import PinProvisioner, run_provisioning_schedul
 from snippen_doorman.state import create_reservation_store
 from snippen_doorman.status_reporter import build_full_status_payload
 from snippen_doorman.sync import DoormanSyncEngine
+from snippen_doorman.wifi_manager import WifiManager
 
 
 def load_env_file(path: str | Path = ".env") -> None:
@@ -336,12 +337,14 @@ async def run_service_command(
     tls_cert: str = "data/tls/cert.pem",
     tls_key: str = "data/tls/key.pem",
     output_json: bool = False,
+    offline_retry_interval: float = 10.0,
 ) -> None:
     """Run Snippen Booking synchronization service or single tick."""
     path = database_path if storage_type == "sqlite" else json_path
     store = create_reservation_store(storage_type=storage_type, path=path)
     db = Database(database_path if storage_type != "memory" else ":memory:")
     allocator = SlotAllocator(min_slot=guest_slot_min, max_slot=guest_slot_max)
+    wifi_mgr = WifiManager()
 
     lock_configs = parse_lock_configs(
         locks_val=locks,
@@ -395,6 +398,7 @@ async def run_service_command(
         lock_ids=lock_ids if lock_ids else None,
         heartbeat_interval_hours=heartbeat_interval_hours,
         node_identity=node_identity,
+        wifi_manager=wifi_mgr,
     )
 
     try:
@@ -530,14 +534,36 @@ async def run_service_command(
                 print(f"Web Dashboard listening on {web_server.scheme}://{web_host}:{web_port}")
 
             stop_event = asyncio.Event()
+            trigger_event = asyncio.Event()
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
                 try:
                     loop.add_signal_handler(sig, stop_event.set)
                 except NotImplementedError:
                     pass
+
+            # Register SIGUSR1 for immediate synchronization triggering (e.g. from NetworkManager dispatcher)
+            if hasattr(signal, "SIGUSR1"):
+                try:
+                    loop.add_signal_handler(
+                        signal.SIGUSR1,
+                        lambda: (
+                            logging.getLogger("snippen_doorman").info(
+                                "Received SIGUSR1 signal: triggering immediate sync cycle."
+                            ),
+                            sync_engine.trigger_immediate_sync(),
+                        ),
+                    )
+                except (NotImplementedError, RuntimeError):
+                    pass
+
             try:
-                await sync_engine.run_loop(interval_seconds=interval_seconds, stop_event=stop_event)
+                await sync_engine.run_loop(
+                    interval_seconds=interval_seconds,
+                    stop_event=stop_event,
+                    trigger_event=trigger_event,
+                    offline_retry_interval=offline_retry_interval,
+                )
             finally:
                 if web_server:
                     web_server.stop()
@@ -873,6 +899,12 @@ def build_parser() -> argparse.ArgumentParser:
             help="Polling interval in seconds (default: 60.0)",
         )
         p.add_argument(
+            "--offline-retry-interval",
+            type=float,
+            default=float(os.getenv("SNIPPEN_DOORMAN_OFFLINE_RETRY_INTERVAL", "10.0")),
+            help="Polling retry interval in seconds when offline (default: 10.0)",
+        )
+        p.add_argument(
             "--timeout",
             type=float,
             default=float(os.getenv("SNIPPEN_DOORMAN_SYNC_TIMEOUT", "10.0")),
@@ -1199,6 +1231,7 @@ def main_cli(argv: list[str] | None = None) -> None:
                     tls_cert=getattr(args, "tls_cert", "data/tls/cert.pem"),
                     tls_key=getattr(args, "tls_key", "data/tls/key.pem"),
                     output_json=getattr(args, "output_json", False),
+                    offline_retry_interval=getattr(args, "offline_retry_interval", 10.0),
                 )
             )
         except (KeyboardInterrupt, SystemExit):

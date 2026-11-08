@@ -118,6 +118,7 @@ SNIPPEN_DOORMAN_API_URL="https://vestreholmensameie.no/wp-json/snippen/v1/door"
 SNIPPEN_DOORMAN_API_TOKEN=""
 DOORMAN_LOCKS="ytterdor=AA:BB:CC:DD:EE:01:0123456789abcdef0123456789abcdef:1,fellesrom=AA:BB:CC:DD:EE:02:fedcba9876543210fedcba9876543210:1"
 SNIPPEN_DOORMAN_SYNC_INTERVAL=60.0
+SNIPPEN_DOORMAN_OFFLINE_RETRY_INTERVAL=10.0
 SNIPPEN_LEAD_TIME_MINUTES=60
 SNIPPEN_GRACE_PERIOD_MINUTES=15
 EOF
@@ -146,6 +147,14 @@ if [ -f "${REPO_ROOT}/systemd/snippen-doorman.service" ]; then
         systemctl daemon-reload
         systemctl enable snippen-doorman.service
     fi
+fi
+
+if [ -f "${REPO_ROOT}/systemd/99-snippen-sync" ]; then
+    mkdir -p /etc/NetworkManager/dispatcher.d
+    cp "${REPO_ROOT}/systemd/99-snippen-sync" /etc/NetworkManager/dispatcher.d/99-snippen-sync
+    chmod 755 /etc/NetworkManager/dispatcher.d/99-snippen-sync
+    chown root:root /etc/NetworkManager/dispatcher.d/99-snippen-sync 2>/dev/null || true
+    echo "   Installed NetworkManager dispatcher /etc/NetworkManager/dispatcher.d/99-snippen-sync."
 fi
 
 # 8. Configure NTP time synchronization (systemd-timesyncd with Norwegian pool)

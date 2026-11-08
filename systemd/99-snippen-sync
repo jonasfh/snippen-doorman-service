@@ -1,0 +1,19 @@
+#!/bin/sh
+# /etc/NetworkManager/dispatcher.d/99-snippen-sync
+# Triggers instant synchronization in snippen-doorman when network comes up.
+
+INTERFACE="$1"
+ACTION="$2"
+
+case "$ACTION" in
+    up|connectivity-change)
+        # Notify snippen-doorman service daemon via SIGUSR1
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl kill -s SIGUSR1 snippen-doorman.service 2>/dev/null || true
+        fi
+        # Fallback for non-systemd or local test runs
+        pkill -USR1 -f "snippen-doorman service run" 2>/dev/null || true
+        ;;
+    *)
+        ;;
+esac
