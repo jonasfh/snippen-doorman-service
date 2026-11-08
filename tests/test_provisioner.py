@@ -318,3 +318,108 @@ async def test_multi_lock_continues_when_first_lock_raises_yalexs_error() -> Non
     assert state_by_addr["98:1B:B5:0C:DF:4A"].status == PinStatus.PROVISIONED
 
     db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_pin_deferred_until_earlier_booking_expires(
+    mock_lock_client: AsyncMock,
+) -> None:
+    """Test that two bookings sharing the same PIN are not programmed concurrently on separate slots."""
+    db = Database(":memory:")
+    allocator = SlotAllocator(min_slot=3, max_slot=9)
+    provisioner = PinProvisioner(
+        db=db,
+        allocator=allocator,
+        lock_client=mock_lock_client,
+        lead_time=timedelta(days=14),  # Long lead time so both bookings fall into window
+        grace_period=timedelta(minutes=15),
+    )
+
+    t1_from = datetime(2026, 11, 12, 10, 0, tzinfo=UTC)
+    t1_to = datetime(2026, 11, 12, 16, 0, tzinfo=UTC)
+    t2_from = datetime(2026, 11, 19, 10, 0, tzinfo=UTC)
+    t2_to = datetime(2026, 11, 19, 16, 0, tzinfo=UTC)
+
+    # Schedule both Thursday bookings with identical PIN "778899"
+    provisioner.schedule_or_update("b_thursday_1", "778899", t1_from, t1_to)
+    provisioner.schedule_or_update("b_thursday_2", "778899", t2_from, t2_to)
+
+    # Tick on Nov 8: both bookings are inside 14-day lead-time window
+    now_nov8 = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
+    res_nov8 = await provisioner.tick(now=now_nov8)
+
+    # Only b_thursday_1 should be activated on lock; b_thursday_2 deferred
+    assert res_nov8.activated == ["b_thursday_1"]
+    assert res_nov8.errors == []
+    assert mock_lock_client.add_pin.call_count == 1
+    mock_lock_client.add_pin.assert_called_with(
+        pin="778899",
+        slot=9,
+        valid_from=t1_from,
+        valid_to=t1_to,
+    )
+
+    b1_rec = db.get_pin("b_thursday_1")
+    b2_rec = db.get_pin("b_thursday_2")
+    assert b1_rec is not None and b1_rec.status == PinStatus.PROVISIONED
+    assert b2_rec is not None and b2_rec.status == PinStatus.SCHEDULED
+
+    # Repeated ticks before Nov 12 should NOT hammer the lock for b_thursday_2
+    mock_lock_client.add_pin.reset_mock()
+    for _ in range(5):
+        res_repeat = await provisioner.tick(now=now_nov8 + timedelta(hours=1))
+        assert res_repeat.activated == []
+        assert res_repeat.errors == []
+        assert mock_lock_client.add_pin.call_count == 0
+
+    # Advance time to Nov 12 16:20 (after b_thursday_1 ends + 15 min grace)
+    now_nov12_after = datetime(2026, 11, 12, 16, 20, tzinfo=UTC)
+    res_nov12 = await provisioner.tick(now=now_nov12_after)
+
+    # b_thursday_1 deprovisioned, and b_thursday_2 now cleanly activated!
+    assert "b_thursday_1" in res_nov12.deprovisioned
+    assert "b_thursday_2" in res_nov12.activated
+    assert mock_lock_client.delete_pin.call_count == 1
+    assert mock_lock_client.add_pin.call_count == 1
+
+    b1_final = db.get_pin("b_thursday_1")
+    b2_final = db.get_pin("b_thursday_2")
+    assert b1_final is not None and b1_final.status == PinStatus.EXPIRED
+    assert b2_final is not None and b2_final.status == PinStatus.PROVISIONED
+
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_pin_overlapping_reports_error_without_calling_lock(
+    mock_lock_client: AsyncMock,
+) -> None:
+    """Test overlapping bookings with same PIN log collision error without spamming lock."""
+    db = Database(":memory:")
+    allocator = SlotAllocator(min_slot=3, max_slot=9)
+    provisioner = PinProvisioner(
+        db=db,
+        allocator=allocator,
+        lock_client=mock_lock_client,
+        lead_time=timedelta(hours=2),
+        grace_period=timedelta(minutes=15),
+    )
+
+    t1_from = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
+    t1_to = datetime(2026, 11, 8, 16, 0, tzinfo=UTC)
+    t2_from = datetime(2026, 11, 8, 14, 0, tzinfo=UTC)  # Overlaps!
+    t2_to = datetime(2026, 11, 8, 18, 0, tzinfo=UTC)
+
+    provisioner.schedule_or_update("b_overlap_1", "998877", t1_from, t1_to)
+    provisioner.schedule_or_update("b_overlap_2", "998877", t2_from, t2_to)
+
+    now = datetime(2026, 11, 8, 12, 30, tzinfo=UTC)
+    res = await provisioner.tick(now=now)
+
+    assert "b_overlap_1" in res.activated
+    assert len(res.errors) == 1
+    assert "Duplicate PIN collision" in res.errors[0]
+    # Lock was only called once (for b_overlap_1), not spammed for b_overlap_2
+    assert mock_lock_client.add_pin.call_count == 1
+
+    db.close()

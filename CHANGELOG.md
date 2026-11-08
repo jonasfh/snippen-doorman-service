@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-11-08
+
+### Fixed
+- Duplicate PIN conflict deferral and lock hammering prevention (#81): Prevented `PinProvisioner` from attempting to program duplicate PINs into separate slots on the lock concurrently. Yale Doorman hardware strictly rejects duplicate PINs across slots (`KEYCODE_EXISTING_KEY` / code 6). If consecutive bookings (e.g. recurring weekly bookings) share the same PIN and both fall within the lead-time window, the subsequent booking is automatically deferred until the earlier booking expires and is deprovisioned, eliminating repeated failed attempts against the lock. Overlapping bookings sharing a PIN are flagged as conflicts without issuing redundant BLE commands.
+- Self-healing BLE re-discovery on BlueZ device cache expiration (#81): When BlueZ purges sleeping locks from its device cache (raising `device 'dev_...' not found: The device disappeared`), `YaleLockClient` automatically intercepts the error, clears the stale device reference, and executes a fresh `BleakScanner.find_device_by_address` scan to re-discover the lock and re-establish connection without requiring service restarts.
+
 ## [0.22.0] - 2026-11-08
 
 ### Fixed
