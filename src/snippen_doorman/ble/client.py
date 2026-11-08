@@ -347,27 +347,32 @@ class YaleLockClient:
             is_connected=lock.is_connected,
         )
 
-    async def _ensure_started(self, timeout: float = 15.0) -> PushLock:
+    async def _ensure_started(self, timeout: float = 15.0, force_scan: bool = False) -> PushLock:
         """Ensure PushLock is started, associated with a BLE device, and initialized."""
         lock = self._get_or_create_push_lock()
         self._push_lock = lock
-        if not getattr(lock, "_running", False) or getattr(lock, "_ble_device", None) is None:
+        if (
+            force_scan
+            or not getattr(lock, "_running", False)
+            or getattr(lock, "_ble_device", None) is None
+        ):
             # Ensure the BLE device is discovered and attached to the lock watcher
-            if hasattr(lock, "_ble_device") and lock._ble_device is None:
+            device = None
+            if not force_scan:
                 device = await get_device(self.address)
-                if device is None:
-                    device = await BleakScanner.find_device_by_address(
-                        self.address, timeout=min(5.0, timeout)
-                    )
-                if device is not None:
-                    lock.set_ble_device(device)
-                else:
-                    if self._cancel_cb is not None:
-                        self._cancel_cb()
-                        self._cancel_cb = None
-                    if hasattr(lock, "_running"):
-                        lock._running = False
-                    raise YaleXSBLEError(f"Device {self.address} not discovered in Bluetooth scan")
+            if device is None:
+                device = await BleakScanner.find_device_by_address(
+                    self.address, timeout=min(5.0, timeout)
+                )
+            if device is not None:
+                lock.set_ble_device(device)
+            else:
+                if self._cancel_cb is not None:
+                    self._cancel_cb()
+                    self._cancel_cb = None
+                if hasattr(lock, "_running"):
+                    lock._running = False
+                raise YaleXSBLEError(f"Device {self.address} not discovered in Bluetooth scan")
 
             if hasattr(lock, "start") and not getattr(lock, "_running", False):
                 start_result = lock.start()
@@ -398,6 +403,8 @@ class YaleLockClient:
         if self._push_lock is not None:
             if hasattr(self._push_lock, "_running"):
                 self._push_lock._running = False
+            if hasattr(self._push_lock, "_ble_device"):
+                self._push_lock._ble_device = None
             if hasattr(self._push_lock, "_execute_forced_disconnect"):
                 try:
                     await self._push_lock._execute_forced_disconnect("client disconnect")
@@ -437,6 +444,18 @@ class YaleLockClient:
                     update_task = getattr(lock, "_update_task", None)
                     if update_task and not update_task.done():
                         await update_task
+        except (YaleXSBLEError, BleakError, OSError) as exc:
+            err_str = str(exc).lower()
+            if "not found" in err_str or "disappeared" in err_str or "does not exist" in err_str:
+                _LOGGER.warning(
+                    "Lock %s disappeared from BlueZ device cache in get_status. Forcing BLE re-discovery...",
+                    self.address,
+                )
+                await self.disconnect()
+                await self._ensure_started(timeout=timeout, force_scan=True)
+            else:
+                _LOGGER.error("BLE error while querying status for %s: %s", self.address, exc)
+                raise
         except TimeoutError as exc:
             raise TimeoutError(
                 f"Timed out after {timeout}s while waiting for status from {self.address}."
@@ -445,7 +464,7 @@ class YaleLockClient:
             raise AuthError(
                 f"Authentication failed for {self.address}. Check key and slot ({self.slot})."
             ) from exc
-        except (DisconnectedError, YaleXSBLEError) as exc:
+        except DisconnectedError as exc:
             _LOGGER.error("BLE error while querying status for %s: %s", self.address, exc)
             raise
 
@@ -460,7 +479,24 @@ class YaleLockClient:
         try:
             async with asyncio.timeout(timeout):
                 lock = await self._ensure_started(timeout=timeout)
-                await lock.lock()
+                try:
+                    await lock.lock()
+                except (YaleXSBLEError, BleakError, OSError) as exc:
+                    err_str = str(exc).lower()
+                    if (
+                        "not found" in err_str
+                        or "disappeared" in err_str
+                        or "does not exist" in err_str
+                    ):
+                        _LOGGER.warning(
+                            "Lock %s disappeared from BlueZ device cache in lock(). Forcing BLE re-discovery...",
+                            self.address,
+                        )
+                        await self.disconnect()
+                        lock = await self._ensure_started(timeout=timeout, force_scan=True)
+                        await lock.lock()
+                    else:
+                        raise
         except TimeoutError as exc:
             raise TimeoutError(
                 f"Timed out after {timeout}s while attempting to lock {self.address}."
@@ -483,7 +519,24 @@ class YaleLockClient:
         try:
             async with asyncio.timeout(timeout):
                 lock = await self._ensure_started(timeout=timeout)
-                await lock.unlock()
+                try:
+                    await lock.unlock()
+                except (YaleXSBLEError, BleakError, OSError) as exc:
+                    err_str = str(exc).lower()
+                    if (
+                        "not found" in err_str
+                        or "disappeared" in err_str
+                        or "does not exist" in err_str
+                    ):
+                        _LOGGER.warning(
+                            "Lock %s disappeared from BlueZ device cache in unlock(). Forcing BLE re-discovery...",
+                            self.address,
+                        )
+                        await self.disconnect()
+                        lock = await self._ensure_started(timeout=timeout, force_scan=True)
+                        await lock.unlock()
+                    else:
+                        raise
         except TimeoutError as exc:
             raise TimeoutError(
                 f"Timed out after {timeout}s while attempting to unlock {self.address}."
@@ -512,7 +565,26 @@ class YaleLockClient:
                 raise YaleXSBLEError(
                     f"Cannot execute raw command on {self.address}: BLE device not discovered"
                 )
-            connected_lock = await lock._ensure_connected()
+            try:
+                connected_lock = await lock._ensure_connected()
+            except (YaleXSBLEError, BleakError, OSError) as exc:
+                err_str = str(exc).lower()
+                if (
+                    "not found" in err_str
+                    or "disappeared" in err_str
+                    or "does not exist" in err_str
+                ):
+                    _LOGGER.warning(
+                        "Lock %s disappeared from BlueZ device cache (%s). Forcing BLE re-discovery scan...",
+                        self.address,
+                        exc,
+                    )
+                    await self.disconnect()
+                    lock = await self._ensure_started(timeout=timeout, force_scan=True)
+                    connected_lock = await lock._ensure_connected()
+                else:
+                    raise
+
             session = getattr(connected_lock, "session", None)
             if session is None:
                 raise DisconnectedError(f"{self.address}: Lock session is not established.")

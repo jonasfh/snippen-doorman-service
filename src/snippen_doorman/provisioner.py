@@ -487,6 +487,36 @@ class PinProvisioner:
             )
         return rec
 
+    def _find_conflicting_pin(self, rec: PinRecord, now: datetime) -> PinRecord | None:
+        """Find an active provisioned pin record sharing the same PIN on the same lock.
+
+        Yale Doorman hardware strictly rejects duplicate PIN codes across slots
+        (error code 6: KEYCODE_EXISTING_KEY). If another booking on the same lock is
+        already PROVISIONED or PENDING_UPDATE with the exact same PIN, and its booking
+        window has not expired (now <= valid_to + grace_period), the secondary booking
+        must be deferred until the earlier booking expires and is deprovisioned.
+        """
+        all_pins = self.db.list_pins()
+        for other in all_pins:
+            if other.booking_id == rec.booking_id:
+                continue
+            if (
+                str(other.lock_id) != str(rec.lock_id)
+                and other.lock_id != "default"
+                and rec.lock_id != "default"
+            ):
+                continue
+            if other.pin != rec.pin:
+                continue
+            if other.status not in (PinStatus.PROVISIONED, PinStatus.PENDING_UPDATE):
+                continue
+            if other.slot is None:
+                continue
+            other_end = other.valid_to + self.grace_period
+            if now <= other_end:
+                return other
+        return None
+
     async def tick(self, now: datetime | None = None) -> ProvisionTickResult:
         """Execute one provisioning reconciliation cycle.
 
@@ -616,6 +646,30 @@ class PinProvisioner:
             latest_act = rec.valid_to + self.grace_period
 
             if earliest_act <= now <= latest_act:
+                # Check for duplicate PIN conflict on the same lock
+                conflicting_pin = self._find_conflicting_pin(rec, now)
+                if conflicting_pin is not None:
+                    conflict_end = conflicting_pin.valid_to + self.grace_period
+                    if rec.valid_from >= conflict_end:
+                        logger.info(
+                            "Deferring update of booking '%s': PIN code is currently active on lock '%s' for booking '%s' (slot %s). Will provision when booking '%s' expires at %s.",
+                            rec.booking_id,
+                            rec.lock_id,
+                            conflicting_pin.booking_id,
+                            conflicting_pin.slot,
+                            conflicting_pin.booking_id,
+                            conflict_end,
+                        )
+                        continue
+                    else:
+                        msg = (
+                            f"Duplicate PIN collision: Booking '{rec.booking_id}' overlaps in time "
+                            f"with booking '{conflicting_pin.booking_id}' on lock '{rec.lock_id}' sharing PIN '{rec.pin}'."
+                        )
+                        logger.warning(msg)
+                        result.errors.append(msg)
+                        continue
+
                 # Still within window - update PIN on lock
                 slot = rec.slot
                 if slot is None:
@@ -652,7 +706,13 @@ class PinProvisioner:
                             status=PinStatus.PROVISIONED,
                         )
                     except LOCK_OPERATION_ERRORS as exc:
-                        msg = f"Failed to update PIN on lock for booking '{rec.booking_id}': {exc}"
+                        if isinstance(exc, YalePinError) and getattr(exc, "code", None) == 6:
+                            msg = (
+                                f"Lock rejected PIN for booking '{rec.booking_id}' on lock '{lid}': "
+                                "PIN already exists in another slot (KEYCODE_EXISTING_KEY)."
+                            )
+                        else:
+                            msg = f"Failed to update PIN on lock for booking '{rec.booking_id}': {exc}"
                         logger.error(msg)
                         result.errors.append(msg)
                         failed = True
@@ -771,6 +831,30 @@ class PinProvisioner:
             latest_activation = rec.valid_to + self.grace_period
 
             if earliest_activation <= now <= latest_activation:
+                # Check for duplicate PIN conflict on the same lock
+                conflicting_pin = self._find_conflicting_pin(rec, now)
+                if conflicting_pin is not None:
+                    conflict_end = conflicting_pin.valid_to + self.grace_period
+                    if rec.valid_from >= conflict_end:
+                        logger.info(
+                            "Deferring JIT provisioning of booking '%s': PIN code is currently active on lock '%s' for earlier booking '%s' (slot %s). Will provision when booking '%s' expires at %s.",
+                            rec.booking_id,
+                            rec.lock_id,
+                            conflicting_pin.booking_id,
+                            conflicting_pin.slot,
+                            conflicting_pin.booking_id,
+                            conflict_end,
+                        )
+                        continue
+                    else:
+                        msg = (
+                            f"Duplicate PIN collision: Booking '{rec.booking_id}' overlaps in time "
+                            f"with booking '{conflicting_pin.booking_id}' on lock '{rec.lock_id}' sharing PIN '{rec.pin}'."
+                        )
+                        logger.warning(msg)
+                        result.errors.append(msg)
+                        continue
+
                 existing_slot = None
                 for s, b_id in self.allocator.allocated_slots().items():
                     if b_id == rec.booking_id:
@@ -826,7 +910,13 @@ class PinProvisioner:
                             )
                             any_success = True
                         except LOCK_OPERATION_ERRORS as exc:
-                            msg = f"Failed to program PIN on lock for booking '{rec.booking_id}': {exc}"
+                            if isinstance(exc, YalePinError) and getattr(exc, "code", None) == 6:
+                                msg = (
+                                    f"Lock rejected PIN for booking '{rec.booking_id}' on lock '{lid}': "
+                                    "PIN already exists in another slot (KEYCODE_EXISTING_KEY)."
+                                )
+                            else:
+                                msg = f"Failed to program PIN on lock for booking '{rec.booking_id}': {exc}"
                             logger.error(msg)
                             result.errors.append(msg)
                             failed = True

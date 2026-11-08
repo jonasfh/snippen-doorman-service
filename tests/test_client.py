@@ -592,3 +592,65 @@ def test_yale_lock_client_delegates_to_mock(monkeypatch: pytest.MonkeyPatch) -> 
         assert client._mock_client.disconnected is True
 
     asyncio.run(_run())
+
+
+def test_ble_rediscovery_when_device_disappears(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that YaleLockClient re-discovers device via BleakScanner when device disappeared from BlueZ."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="98:1B:B5:0B:BB:35",
+            key="0123456789abcdef0123456789abcdef",
+            slot=4,
+        )
+
+        mock_session = MagicMock()
+        mock_session.execute = AsyncMock(return_value=bytes([0xAA, 0x27, 0x00]))
+
+        mock_connected = MagicMock()
+        mock_connected.session = mock_session
+
+        call_count = 0
+
+        async def _mock_ensure_connected():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                from yalexs_ble.session import YaleXSBLEError
+
+                raise YaleXSBLEError(
+                    "device 'dev_98_1B_B5_0B_BB_35' not found: The device disappeared"
+                )
+            return mock_connected
+
+        mock_push = MagicMock()
+        mock_push._running = True
+        mock_push._ble_device = MagicMock()
+        mock_push._first_update_future = None
+        mock_push.wait_for_first_update = AsyncMock()
+        mock_push._ensure_connected = _mock_ensure_connected
+        mock_push._execute_forced_disconnect = AsyncMock()
+
+        scanned_devices = []
+
+        async def _mock_find_device(address, timeout=5.0):
+            fresh_device = MagicMock()
+            fresh_device.address = address
+            scanned_devices.append(fresh_device)
+            return fresh_device
+
+        from bleak import BleakScanner
+
+        monkeypatch.setattr(BleakScanner, "find_device_by_address", _mock_find_device)
+
+        client._push_lock = mock_push
+
+        cmd = bytearray([0x27, 0x00, 0x00, 0x00])
+        resp = await client._execute_raw_command(cmd, "test_cmd", 0x27)
+        assert resp == bytes([0xAA, 0x27, 0x00])
+        # Verify it retried after re-scanning
+        assert call_count == 2
+        assert len(scanned_devices) == 1
+        assert scanned_devices[0].address == "98:1B:B5:0B:BB:35"
+
+    asyncio.run(_run())
