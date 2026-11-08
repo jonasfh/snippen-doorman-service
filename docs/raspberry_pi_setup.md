@@ -68,7 +68,9 @@ SNIPPEN_GRACE_PERIOD_MINUTES=15
 SNIPPEN_GUEST_SLOT_MIN=3
 SNIPPEN_GUEST_SLOT_MAX=9
 
-# HTTPS (TLS) for Web Dashboard (genererer selvsignert sertifikat i data/tls/ ved første oppstart)
+# Web Dashboard og HTTPS (TLS)
+SNIPPEN_DOORMAN_WEB_HOST=0.0.0.0
+SNIPPEN_DOORMAN_WEB_PORT=8080
 SNIPPEN_DOORMAN_WEB_TLS=true
 ```
 
@@ -80,7 +82,21 @@ SNIPPEN_DOORMAN_WEB_TLS=true
 
 ---
 
-## 4. Drift med systemd
+## 4. Web Dashboard og Web-Config PWA
+
+Tjenesten kjører et innebygd administrasjonsgrensesnitt på port **8080** over HTTPS:
+
+- **Admin Dashboard:** `https://snippen-doorman-service.local:8080` (eller `https://<pi-ip>:8080`)
+- **WiFi Provisioning PWA (Web Bluetooth):** `https://snippen-doorman-service.local:8080/web-config`
+
+### Første gangs tilkobling og selvsignert sertifikat
+Siden TLS-sertifikatet opprettes automatisk på enheten (`/opt/snippen-doorman-service/data/tls/cert.pem`), vil nettleseren gi en advarsel (*"Tilkoblingen er ikke privat"*):
+1. Klikk **Avansert** (*Advanced*).
+2. Velg **Fortsett til snippen-doorman-service.local (usikkert)**.
+
+---
+
+## 5. Drift med systemd
 
 ### Starte og stoppe tjenesten
 ```bash
@@ -104,11 +120,11 @@ journalctl -u snippen-doorman -f
 
 ---
 
-## 5. Tidssynkronisering og NTP (Systemklokke & Dørlåser)
+## 6. Tidssynkronisering og NTP (Systemklokke & Dørlåser)
 
 Raspberry Pi mangler integrert batteridrevet maskinvareklokke (RTC). For at tidsbegrensede PIN-koder skal være nøyaktige og låsenes interne klokke alltid synkron, styres tiden i to ledd:
 
-### 5.1 Systemtid på Raspberry Pi (`systemd-timesyncd`)
+### 6.1 Systemtid på Raspberry Pi (`systemd-timesyncd`)
 Installasjonsskriptet setter opp `systemd-timesyncd` mot den norske NTP-poolen (`no.pool.ntp.org`) og aktiverer `fake-hwclock` (forhindrer tidsreversering ved reboot uten internett).
 
 ```bash
@@ -121,13 +137,13 @@ timedatectl status
 
 Systemd-tjenesten `snippen-doorman.service` har `After=time-sync.target`, som forhindrer at doorman-tjenesten starter før systemklokken er verifisert over NTP.
 
-### 5.2 Låsenes interne klokke (BLE RTC Heartbeat)
+### 6.2 Låsenes interne klokke (BLE RTC Heartbeat)
 - **Ved ny booking:** Klokken i Yale Doorman stilles automatisk over BLE hver gang en ny PIN-kode programmeres inn.
 - **Daglig Heartbeat:** I perioder uten nye bookinger vil `DoormanSyncEngine` kontakte låsene én gang i døgnet (`SNIPPEN_DOORMAN_HEARTBEAT_INTERVAL_HOURS=24.0`) for å synkronisere låsens interne RTC-klokke og oppdatere batteritelemetri.
 
 ---
 
-## 6. Bluetooth Recovery og feilsøking (#7)
+## 7. Bluetooth Recovery og feilsøking (#7)
 
 Dersom Bluetooth-adapteren opplever heng, interferens, feilmeldingen `No powered Bluetooth adapters found. Turn on Bluetooth and try again.`, eller soft-block på en fersk installasjon:
 

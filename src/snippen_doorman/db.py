@@ -346,7 +346,7 @@ class Database:
                 """,
                 (
                     booking_id.strip(),
-                    lock_id.strip(),
+                    str(lock_id).strip(),
                     slot,
                     pin,
                     status_val,
@@ -361,7 +361,7 @@ class Database:
         return PinRecord(
             id=record_id,
             booking_id=booking_id.strip(),
-            lock_id=lock_id.strip(),
+            lock_id=str(lock_id).strip(),
             slot=slot,
             pin=pin,
             status=status if isinstance(status, PinStatus) else PinStatus(status),
@@ -377,7 +377,7 @@ class Database:
             if lock_id is not None:
                 cursor = self._conn.execute(
                     "SELECT * FROM pins WHERE booking_id = ? AND lock_id = ?",
-                    (booking_id.strip(), lock_id.strip()),
+                    (booking_id.strip(), str(lock_id).strip()),
                 )
             else:
                 cursor = self._conn.execute(
@@ -413,7 +413,7 @@ class Database:
             params.append(status_val)
         if lock_id is not None:
             conditions.append("lock_id = ?")
-            params.append(lock_id.strip())
+            params.append(str(lock_id).strip())
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
@@ -463,11 +463,11 @@ class Database:
             if lock_id is not None:
                 cursor = self._conn.execute(
                     "DELETE FROM pins WHERE booking_id = ? AND lock_id = ?",
-                    (booking_id.strip(), lock_id.strip()),
+                    (booking_id.strip(), str(lock_id).strip()),
                 )
                 self._conn.execute(
                     "DELETE FROM pin_lock_states WHERE booking_id = ? AND lock_id = ?",
-                    (booking_id.strip(), lock_id.strip()),
+                    (booking_id.strip(), str(lock_id).strip()),
                 )
             else:
                 cursor = self._conn.execute(
@@ -498,7 +498,7 @@ class Database:
         clean_bid = booking_id.strip()
         clean_addr = lock_address.strip()
         clean_name = lock_name.strip() if lock_name else "Hoveddør"
-        clean_lid = lock_id.strip() if lock_id else "default"
+        clean_lid = str(lock_id).strip() if lock_id is not None else "default"
         status_val = status.value if isinstance(status, PinStatus) else str(status)
 
         with self._lock, self._conn:
@@ -568,7 +568,7 @@ class Database:
             params.append(lock_address.strip())
         if lock_id is not None:
             conditions.append("lock_id = ?")
-            params.append(lock_id.strip())
+            params.append(str(lock_id).strip())
         if status is not None:
             status_val = status.value if isinstance(status, PinStatus) else str(status)
             conditions.append("status = ?")

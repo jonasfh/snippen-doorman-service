@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+from yalexs_ble.session import YaleXSBLEError
 
 from snippen_doorman.allocator import SlotAllocator
 from snippen_doorman.db import Database, PinStatus
@@ -240,3 +241,80 @@ async def test_scheduler_background_loop(test_setup) -> None:
     stop_event.set()
     await task
     assert task.done()
+
+
+@pytest.mark.asyncio
+async def test_tick_handles_yalexs_ble_error_and_does_not_leak_slots(test_setup) -> None:
+    """Test tick handles YaleXSBLEError gracefully without crashing or leaking slots."""
+    db, allocator, provisioner, mock_client = test_setup
+
+    now = datetime(2026, 11, 8, 14, 0, tzinfo=UTC)
+    provisioner.schedule_or_update(
+        booking_id="b_fail_test",
+        pin="123456",
+        valid_from=now + timedelta(minutes=10),
+        valid_to=now + timedelta(hours=2),
+    )
+
+    mock_client.add_pin.side_effect = YaleXSBLEError("No advertisement received before timeout")
+
+    # Run tick 15 times to simulate multiple failed sync ticks
+    for _ in range(15):
+        res = await provisioner.tick(now=now)
+        assert len(res.errors) == 1
+        assert "No advertisement received before timeout" in res.errors[0]
+        # Allocator should have released the slot on failure
+        assert allocator.free_count == allocator.capacity
+        assert "b_fail_test" not in allocator.allocated_slots().values()
+
+    # Verify pin is still scheduled with error recorded in DB
+    pin_rec = db.get_pin("b_fail_test")
+    assert pin_rec is not None
+    assert pin_rec.status == PinStatus.SCHEDULED
+
+
+@pytest.mark.asyncio
+async def test_multi_lock_continues_when_first_lock_raises_yalexs_error() -> None:
+    """Test multi-lock provisioning continues to next lock if first lock fails."""
+    db = Database(":memory:")
+    allocator = SlotAllocator(min_slot=3, max_slot=9)
+
+    client1 = AsyncMock()
+    client1.address = "98:1B:B5:0B:BB:35"
+    client1.name = "Festsalen"
+    client1.lock_id = 1
+    client1.add_pin.side_effect = YaleXSBLEError("Disconnected")
+
+    client2 = AsyncMock()
+    client2.address = "98:1B:B5:0C:DF:4A"
+    client2.name = "Peisestua"
+    client2.lock_id = 1
+    client2.add_pin.return_value = None
+
+    provisioner = PinProvisioner(
+        db=db,
+        allocator=allocator,
+        lock_clients=[client1, client2],
+        lead_time=timedelta(minutes=60),
+    )
+
+    now = datetime(2026, 11, 8, 14, 0, tzinfo=UTC)
+    provisioner.schedule_or_update(
+        booking_id="b_multi_test",
+        pin="654321",
+        valid_from=now + timedelta(minutes=10),
+        valid_to=now + timedelta(hours=2),
+        lock_id=1,
+    )
+
+    res = await provisioner.tick(now=now)
+    assert len(res.errors) == 1
+    assert "Disconnected" in res.errors[0]
+
+    states = db.list_pin_lock_states(booking_id="b_multi_test")
+    assert len(states) == 2
+    state_by_addr = {s.lock_address: s for s in states}
+    assert state_by_addr["98:1B:B5:0B:BB:35"].status == PinStatus.SCHEDULED
+    assert state_by_addr["98:1B:B5:0C:DF:4A"].status == PinStatus.PROVISIONED
+
+    db.close()

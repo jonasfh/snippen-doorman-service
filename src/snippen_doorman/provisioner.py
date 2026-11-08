@@ -14,6 +14,32 @@ from snippen_doorman.allocator import NoSlotsAvailableError, SlotAllocator
 from snippen_doorman.ble.pin import YalePinError
 from snippen_doorman.db import Database, PinRecord, PinStatus
 
+try:
+    from yalexs_ble.session import YaleXSBLEError
+except ImportError:
+
+    class YaleXSBLEError(Exception):  # type: ignore[no-redef]
+        pass
+
+
+try:
+    from bleak import BleakError
+except ImportError:
+
+    class BleakError(Exception):  # type: ignore[no-redef]
+        pass
+
+
+LOCK_OPERATION_ERRORS = (
+    YalePinError,
+    YaleXSBLEError,
+    BleakError,
+    TimeoutError,
+    OSError,
+    RuntimeError,
+    ValueError,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_LEAD_TIME_MINUTES = 2880
@@ -420,7 +446,7 @@ class PinProvisioner:
                             pin=rec.pin,
                             status=PinStatus.REVOKED,
                         )
-                    except (YalePinError, TimeoutError, OSError, RuntimeError, ValueError) as exc:
+                    except LOCK_OPERATION_ERRORS as exc:
                         logger.error(
                             "Error deleting PIN on lock %s during revoke for booking '%s': %s",
                             addr,
@@ -510,7 +536,7 @@ class PinProvisioner:
                             pin=rec.pin,
                             status=PinStatus.REVOKED,
                         )
-                    except (YalePinError, TimeoutError, OSError, RuntimeError, ValueError) as exc:
+                    except LOCK_OPERATION_ERRORS as exc:
                         msg = f"Failed to delete PIN from lock during retry revoke for '{rec.booking_id}': {exc}"
                         logger.error(msg)
                         result.errors.append(msg)
@@ -556,13 +582,7 @@ class PinProvisioner:
                                 pin=rec.pin,
                                 status=PinStatus.EXPIRED,
                             )
-                        except (
-                            YalePinError,
-                            TimeoutError,
-                            OSError,
-                            RuntimeError,
-                            ValueError,
-                        ) as exc:
+                        except LOCK_OPERATION_ERRORS as exc:
                             msg = f"Failed to delete PIN from lock for booking '{rec.booking_id}': {exc}"
                             logger.error(msg)
                             result.errors.append(msg)
@@ -631,7 +651,7 @@ class PinProvisioner:
                             pin=rec.pin,
                             status=PinStatus.PROVISIONED,
                         )
-                    except (YalePinError, TimeoutError, OSError, RuntimeError, ValueError) as exc:
+                    except LOCK_OPERATION_ERRORS as exc:
                         msg = f"Failed to update PIN on lock for booking '{rec.booking_id}': {exc}"
                         logger.error(msg)
                         result.errors.append(msg)
@@ -674,13 +694,7 @@ class PinProvisioner:
                                 pin=rec.pin,
                                 status=PinStatus.SCHEDULED,
                             )
-                        except (
-                            YalePinError,
-                            TimeoutError,
-                            OSError,
-                            RuntimeError,
-                            ValueError,
-                        ) as exc:
+                        except LOCK_OPERATION_ERRORS as exc:
                             msg = f"Failed to deprovision rescheduled booking '{rec.booking_id}': {exc}"
                             logger.error(msg)
                             result.errors.append(msg)
@@ -713,13 +727,7 @@ class PinProvisioner:
                                 pin=rec.pin,
                                 status=PinStatus.EXPIRED,
                             )
-                        except (
-                            YalePinError,
-                            TimeoutError,
-                            OSError,
-                            RuntimeError,
-                            ValueError,
-                        ) as exc:
+                        except LOCK_OPERATION_ERRORS as exc:
                             msg = f"Failed to deprovision expired booking '{rec.booking_id}': {exc}"
                             logger.error(msg)
                             result.errors.append(msg)
@@ -763,21 +771,41 @@ class PinProvisioner:
             latest_activation = rec.valid_to + self.grace_period
 
             if earliest_activation <= now <= latest_activation:
-                try:
-                    slot = self.allocator.allocate(rec.booking_id)
-                except NoSlotsAvailableError as exc:
-                    msg = f"No slots available for booking '{rec.booking_id}': {exc}"
-                    logger.warning(msg)
-                    result.errors.append(msg)
-                    continue
+                existing_slot = None
+                for s, b_id in self.allocator.allocated_slots().items():
+                    if b_id == rec.booking_id:
+                        existing_slot = s
+                        break
+
+                if existing_slot is not None:
+                    slot = existing_slot
+                else:
+                    try:
+                        slot = self.allocator.allocate(rec.booking_id)
+                    except NoSlotsAvailableError as exc:
+                        msg = f"No slots available for booking '{rec.booking_id}': {exc}"
+                        logger.warning(msg)
+                        result.errors.append(msg)
+                        continue
 
                 clients = await self._get_lock_clients(lock_id=rec.lock_id)
                 failed = False
+                any_success = False
                 if clients:
                     for idx, client in enumerate(clients):
                         addr, name, lid = self._client_meta(
                             client, fallback_lock_id=rec.lock_id, idx=idx
                         )
+                        existing_lock_state = self.db.get_pin_lock_state(
+                            booking_id=rec.booking_id, lock_address=addr
+                        )
+                        if (
+                            existing_lock_state is not None
+                            and existing_lock_state.status == PinStatus.PROVISIONED
+                        ):
+                            any_success = True
+                            continue
+
                         try:
                             await self._call_add_pin(
                                 client=client,
@@ -796,13 +824,8 @@ class PinProvisioner:
                                 pin=rec.pin,
                                 status=PinStatus.PROVISIONED,
                             )
-                        except (
-                            YalePinError,
-                            TimeoutError,
-                            OSError,
-                            RuntimeError,
-                            ValueError,
-                        ) as exc:
+                            any_success = True
+                        except LOCK_OPERATION_ERRORS as exc:
                             msg = f"Failed to program PIN on lock for booking '{rec.booking_id}': {exc}"
                             logger.error(msg)
                             result.errors.append(msg)
@@ -817,17 +840,17 @@ class PinProvisioner:
                                 status=PinStatus.SCHEDULED,
                                 error_message=str(exc),
                             )
-                            break
 
                 if not failed:
                     rec.slot = slot
                     rec.status = PinStatus.PROVISIONED
                     self.db.update_pin(rec)
                     result.activated.append(rec.booking_id)
+                elif any_success:
+                    rec.slot = slot
+                    self.db.update_pin(rec)
                 else:
                     self.allocator.release(slot)
-
-        return result
 
         return result
 
@@ -859,7 +882,7 @@ async def run_provisioning_scheduler(
                     len(res.deprovisioned),
                     len(res.errors),
                 )
-        except (YalePinError, TimeoutError, OSError, RuntimeError, ValueError):
+        except LOCK_OPERATION_ERRORS:
             logger.exception("Unexpected error during provisioning tick")
 
         if stop_event is not None:

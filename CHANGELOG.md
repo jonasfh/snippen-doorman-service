@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-11-08
+
+### Fixed
+- Unhandled `YaleXSBLEError` and `BleakError` during provisioning tick (#80): Caught BLE connection exceptions (`NoAdvertisementError`, `DisconnectedError`, etc.) in `PinProvisioner` so that an offline or sleeping lock does not abort synchronization cycles or crash subsequent door programming.
+- Keypad slot leak on provisioning failure (#80): Fixed slot exhaustion where failed attempts repeatedly allocated slots without releasing them, eventually raising `NoSlotsAvailableError`. Reuses existing slot assignments for retried bookings and releases unprovisioned slots on failure.
+- Corrupted `PushLock` state on discovery timeout (#80): In `YaleLockClient._ensure_started()`, when discovery or initial update times out, properly disconnects and resets `_running = False` so subsequent attempts re-discover the device instead of failing with `AssertionError: assert self._ble_device is not None`.
+- Integer `lock_id` support in `Database` (#80): Ensured integer lock IDs (e.g. `DOORMAN_LOCK_1_LOCK_ID=1`) are coerced to strings so `lock_id.strip()` does not raise `AttributeError`.
+
+### Added
+- Environment variable configuration for Web Dashboard host and port (#80): Added `SNIPPEN_DOORMAN_WEB_HOST` and `SNIPPEN_DOORMAN_WEB_PORT` environment variables in `main.py` and `default.env`.
+- Web Dashboard and Web Bluetooth PWA documentation (#80): Documented HTTPS access on port 8080 and self-signed TLS certificate handling in `docs/raspberry_pi_setup.md`.
+
 ## [0.21.0] - 2026-11-07
 
 ### Added
