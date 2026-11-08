@@ -66,3 +66,24 @@ def test_connect_wifi_failure() -> None:
         ok, msg = wm.connect("MySSID", "wrongpassword")
         assert ok is False
         assert "Secrets were required" in msg
+
+
+def test_rescan_wifi() -> None:
+    wm = WifiManager(interface="wlan0")
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/nmcli"),
+        patch("subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        assert wm.rescan() is True
+
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="Scan failed"
+        )
+        assert wm.rescan() is False
+
+    with patch("shutil.which", return_value=None):
+        assert wm.rescan() is False

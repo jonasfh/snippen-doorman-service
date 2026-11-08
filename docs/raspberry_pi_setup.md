@@ -61,6 +61,7 @@ DOORMAN_LOCKS="ytterdor=AA:BB:CC:DD:EE:01:0123456789abcdef0123456789abcdef:1,fel
 
 # Tidsstyring (sekunder / minutter)
 SNIPPEN_DOORMAN_SYNC_INTERVAL=60.0
+SNIPPEN_DOORMAN_OFFLINE_RETRY_INTERVAL=10.0
 SNIPPEN_LEAD_TIME_MINUTES=60
 SNIPPEN_GRACE_PERIOD_MINUTES=15
 
@@ -185,3 +186,42 @@ bluetoothctl power on
    ```
 5. **D-Bus tilgangsfeil**:
    - Hvis loggen viser `PermissionDenied` mot `org.bluez`, sjekk at `/etc/dbus-1/system.d/snippen-doorman.conf` eksisterer og kjør `sudo systemctl reload dbus`.
+
+---
+
+## 8. Drift uten fast internett («Walk-by Sync» med delt mobilnett)
+
+Når Raspberry Pi står plassert i Snippen grendehus uten fast bredbånd, synkroniseres bookingdata ved at noen går forbi med delt nett (personal hotspot) på mobiltelefonen.
+
+### 8.1 Hvordan umiddelbar synkronisering fungerer
+1. **NetworkManager Dispatcher (`SIGUSR1`):** I det millisekundet Pi-en kobler seg til telefonens Wi-Fi og tildeles en lokal IP-adresse, kjører NetworkManager skriptet `/etc/NetworkManager/dispatcher.d/99-snippen-sync`. Dette sender signalsending `SIGUSR1` direkte til `snippen-doorman`-prosessen.
+2. **Øyeblikkelig oppvåkning:** Doorman-tjenesten avbryter dvalen på mikrosekundet og kjører en full synkroniseringssyklus (`sync_once`) mot WordPress Booking API umiddelbart.
+3. **Adaptiv offline-loop:** Dersom nettet var nede, venter ikke tjenesten i f.eks. 15 minutter, men sjekker på nytt med et kort offline-intervall (`SNIPPEN_DOORMAN_OFFLINE_RETRY_INTERVAL=10.0`). Dette fungerer som en robust sikring dersom telefonens 4G/5G-modem brukte et par sekunder på å åpne internettruting.
+4. **Aktiv Wi-Fi-reskanning:** Når tjenesten er offline, trigges en aktiv Wi-Fi-skanning med jevne mellomrom for å oppdage kjente hotspots raskt (slik at Pi-en ikke sover forbi mobilen).
+
+### 8.2 Konfigurere flere kjente Wi-Fi-nettverk (flere telefoner)
+Linux NetworkManager støtter lagring av så mange kjente Wi-Fi-nettverk som ønskelig. Både din telefon og f.eks. Lises telefon kan legges til, slik at Pi automatisk kobler seg til den som er tilgjengelig:
+
+```bash
+# Legg til telefon 1
+sudo nmcli device wifi connect "Jonas iPhone" password "hemmelig_passord_1"
+
+# Legg til telefon 2
+sudo nmcli device wifi connect "Lises iPhone" password "hemmelig_passord_2"
+
+# Sjekk lagrede profiler (begge skal ha AUTOCONNECT=yes)
+nmcli connection show
+```
+
+Du kan også koble til nye nettverk via Web Dashboard / Web-Config PWA på `https://<pi-ip>:8080/web-config`.
+
+### 8.3 Beste praksis for telefonens hotspot
+- **iPhone:** Gå til *Innstillinger* -> *Delt internett* og slå på **Maksimal kompatibilitet** (dette tvinger 2.4 GHz som har best rekkevidde og støttes av alle Raspberry Pi-modeller).
+- **Skjerm på ved passering:** Hold gjerne skjermen på telefonen åpen på siden for *Delt internett* i 5–10 sekunder idet du nærmer deg grendehuset. Smarttelefoner sparer batteri ved å skru ned beacon-utsending hvis skjermen er låst og ingen enheter er tilkoblet.
+- **Manuell trigger via terminal (valgfritt):**
+  Dersom du er koblet til Pi-en over SSH eller vil teste signalet manuelt:
+  ```bash
+  sudo systemctl kill -s SIGUSR1 snippen-doorman
+  # eller:
+  pkill -USR1 -f "snippen-doorman service run"
+  ```

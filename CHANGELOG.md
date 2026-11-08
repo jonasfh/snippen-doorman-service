@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-11-08
+
+### Added
+- Walk-by Sync with NetworkManager Dispatcher and SIGUSR1 signal handling (#83): Added instant synchronization when Raspberry Pi establishes Wi-Fi connectivity to a mobile hotspot. NetworkManager executes `/etc/NetworkManager/dispatcher.d/99-snippen-sync` on network up/connectivity change, sending `SIGUSR1` to the daemon to wake up the synchronization loop and trigger `sync_once` immediately.
+- Adaptive offline retry interval (#83): Configured `SNIPPEN_DOORMAN_OFFLINE_RETRY_INTERVAL` (default 10.0s). When the booking API or network is unreachable (`_network_down`), `DoormanSyncEngine` polls at short intervals instead of waiting for the full normal interval (e.g. 15 minutes), ensuring swift synchronization as soon as internet access is restored.
+- Background Wi-Fi rescan on offline status (#83): Added `WifiManager.rescan()` to periodically trigger `nmcli device wifi rescan` while offline, enabling rapid discovery and association to mobile hotspots without waiting for Linux Wi-Fi backoff intervals.
+- Multi-hotspot documentation and mobile hotspot best practices (#83): Documented configuring multiple Wi-Fi SSIDs (e.g. multiple phones) via `nmcli` and Web Dashboard, along with iPhone "Maximum Compatibility" (2.4 GHz) guidance in `docs/raspberry_pi_setup.md`.
+
 ## [0.23.0] - 2026-11-08
 
 ### Fixed

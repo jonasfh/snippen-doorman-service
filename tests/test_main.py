@@ -322,6 +322,8 @@ def test_service_parser() -> None:
             "secret123",
             "--interval",
             "30.0",
+            "--offline-retry-interval",
+            "5.0",
             "--storage",
             "json",
             "--json-path",
@@ -334,6 +336,7 @@ def test_service_parser() -> None:
     assert run_args.api_url == "https://example.com/wp-json/snippen/v1/door"
     assert run_args.api_token == "secret123"
     assert run_args.interval == 30.0
+    assert run_args.offline_retry_interval == 5.0
     assert run_args.storage == "json"
     assert run_args.json_path == "test_state.json"
     assert run_args.auto_pin is False
