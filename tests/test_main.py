@@ -213,6 +213,9 @@ def test_schedule_cli_execution_roundtrip(tmp_path: Path, capsys: pytest.Capture
     captured = capsys.readouterr()
     assert "cli_book_1" in captured.out
     assert "SCHEDULED" in captured.out
+    assert "Valid From (UTC)" in captured.out
+    assert "Valid To (UTC)" in captured.out
+    assert "UTC" in captured.out
 
     # 3. schedule sync (offline without lock)
     main_cli(["--database-path", db_file, "schedule", "sync"])

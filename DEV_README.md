@@ -4,6 +4,21 @@
 
 `snippen-doorman-service` is a Python service designed to manage temporary access codes for Yale Doorman door locks integrated with the Snippen booking platform.
 
+### Tidssone- og Tidsreferansearkitektur
+
+For å sikre at adgangskoder er gyldige nøyaktig i den avtalte leieperioden (inkludert buffer før og grace etter), følges et strengt skille mellom **UTC internt** og **lokaltid i brukergrensesnittene**:
+
+1. **WordPress Booking API (`snippen-booking`)**:
+   - Reservasjoner registreres med dato og klokkeslett i nettstedets tidssone (`wp_timezone()`, f.eks. `Europe/Oslo`).
+   - REST API-et (`GET /wp-json/snippen/v1/door/bookings`) konverterer lokale tidspunkter til ekte UTC Unix-tidsstempler før buffer og grace beregnes, og returnerer dem som standard ISO 8601 UTC-strenger (`YYYY-MM-DDTHH:MM:SSZ`) (Issue jonasfh/snippen-booking#386).
+2. **Doorman Gateway & Bakgrunnsmotor (`snippen-doorman-service`)**:
+   - `booking_client.py` parser alle innkommende tidsstempler med `datetime.astimezone(UTC)`.
+   - `db.py` og tilstandslagring lagrer alle tidsstempler konsekvent i UTC.
+   - Dørlåsens interne RTC-klokke synkroniseres til UTC Unix-epoke (`CMD_SET_RTC`), og tidsplanen for koder (`CMD_KEYCODE_ACCESS`) overføres som UTC-sekunder.
+3. **Brukergrensesnitt**:
+   - **Web-dashboard (`html.py`)**: Viser tidspunkter konvertert til nettleserens lokale tidssone (`d.toLocaleString('no-NO')`) og merker tabellene tydelig med `(lokaltid)`.
+   - **CLI (`schedule list`)**: Lister tidsangivelser merket eksplisitt med `(UTC)`.
+
 ### Directory Layout
 
 ```

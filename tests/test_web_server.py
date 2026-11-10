@@ -59,6 +59,9 @@ def test_web_server_endpoints(tmp_path) -> None:
             assert res.status == 200
             content = res.read().decode("utf-8")
             assert "Snippen Doorman Gateway" in content
+            assert "Gyldig (Fra → Til) (lokaltid)" in content
+            assert "Starttid (lokaltid)" in content
+            assert "Sluttid (lokaltid)" in content
 
         # 2. GET /api/status
         with urlopen(f"{base_url}/api/status") as res:

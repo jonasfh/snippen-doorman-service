@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1] - 2026-11-10
+
+### Fixed
+- Tydeliggjøring av tidssone i brukergrensesnitt (lokaltid vs. UTC) (#85):
+  - Web-dashboard (`html.py`): Tabelloverskrifter for aktive PIN-koder og synkroniserte reservasjoner er nå tydelig merket med `(lokaltid)` og hjelpetekst som bekrefter at visningen følger nettleserens lokale tidssone.
+  - CLI (`main.py`): Tabellvisningen i `schedule list` merker nå kolonnene eksplisitt som `Valid From (UTC)` og `Valid To (UTC)`.
+  - Dokumentasjon (`DEV_README.md`): Dokumentert helhetlig tidssone- og tidsreferansearkitektur på tvers av WordPress (`wp_timezone()`), Doorman REST API (UTC ISO 8601 `Z`), Doorman daemon/DB/RTC (UTC) og brukergrensesnitt.
+
 ## [0.24.0] - 2026-11-08
 
 ### Added
