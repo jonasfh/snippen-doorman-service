@@ -262,19 +262,19 @@ async def run_schedule_command(
                     print("\nNo PIN reservations found.")
                     return
                 print(f"\nFound {len(records)} PIN reservation(s):")
-                print("-" * 80)
+                print("-" * 82)
                 print(
-                    f"{'Booking ID':<20} {'Slot':<6} {'Status':<13} {'Valid From':<19} {'Valid To':<19}"
+                    f"{'Booking ID':<20} {'Slot':<6} {'Status':<13} {'Valid From (UTC)':<20} {'Valid To (UTC)':<20}"
                 )
-                print("-" * 80)
+                print("-" * 82)
                 for r in records:
                     slot_str = str(r.slot) if r.slot is not None else "-"
-                    vf_str = r.valid_from.strftime("%Y-%m-%d %H:%M")
-                    vt_str = r.valid_to.strftime("%Y-%m-%d %H:%M")
+                    vf_str = r.valid_from.strftime("%Y-%m-%d %H:%M UTC")
+                    vt_str = r.valid_to.strftime("%Y-%m-%d %H:%M UTC")
                     print(
-                        f"{r.booking_id:<20} {slot_str:<6} {r.status.value:<13} {vf_str:<19} {vt_str:<19}"
+                        f"{r.booking_id:<20} {slot_str:<6} {r.status.value:<13} {vf_str:<20} {vt_str:<20}"
                     )
-                print("-" * 80)
+                print("-" * 82)
 
             elif action == "revoke":
                 if not booking_id:

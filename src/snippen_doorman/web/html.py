@@ -327,7 +327,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <th style="padding: 0.6rem 0.5rem;">Status i lås</th>
                 <th style="padding: 0.6rem 0.5rem;">Spor</th>
                 <th style="padding: 0.6rem 0.5rem;">PIN</th>
-                <th style="padding: 0.6rem 0.5rem;">Gyldig (Fra → Til)</th>
+                <th style="padding: 0.6rem 0.5rem;" title="Tidspunkter vises i lokal tid (nettleserens tidssone)">Gyldig (Fra → Til) (lokaltid)</th>
                 <th style="padding: 0.6rem 0.5rem;">JIT-aktivering</th>
                 <th style="padding: 0.6rem 0.5rem;">Sist endret</th>
               </tr>
@@ -352,8 +352,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <th style="padding: 0.6rem 0.5rem;">Lås-ID</th>
                 <th style="padding: 0.6rem 0.5rem;">Status</th>
                 <th style="padding: 0.6rem 0.5rem;">PIN</th>
-                <th style="padding: 0.6rem 0.5rem;">Starttid</th>
-                <th style="padding: 0.6rem 0.5rem;">Sluttid</th>
+                <th style="padding: 0.6rem 0.5rem;" title="Tidspunkter vises i lokal tid (nettleserens tidssone)">Starttid (lokaltid)</th>
+                <th style="padding: 0.6rem 0.5rem;" title="Tidspunkter vises i lokal tid (nettleserens tidssone)">Sluttid (lokaltid)</th>
                 <th style="padding: 0.6rem 0.5rem;">Sist sett ved poll</th>
               </tr>
             </thead>
