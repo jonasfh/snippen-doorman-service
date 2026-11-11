@@ -14,7 +14,7 @@ authors = [
 dependencies = [
     "cryptography>=41.0.0",
     "packaging>=23.0",
-    "yalexs-ble>=4.0.5",
+    "yalexs-ble>=10.0.0",
     "bleak>=3.0.2",
 ]
 

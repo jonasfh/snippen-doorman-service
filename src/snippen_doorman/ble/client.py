@@ -3,73 +3,60 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import re
 import struct
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Self
+from typing import Self, TypeVar
 
 from bleak import BleakError, BleakScanner
-from yalexs_ble import PushLock, util
+from yalexs_ble import PushLock
 from yalexs_ble.push import get_device
-from yalexs_ble.session import AuthError, DisconnectedError, ResponseError, Session, YaleXSBLEError
-
-
-# Yale Access Modules use 0xCC for keycode/credential command responses.
-# Monkeypatch yalexs_ble.session.Session._validate_response to allow 0xCC alongside 0xAA and 0xBB.
-def _patch_session_validation() -> None:
-    def _extended_validate_response(self: Session, response: bytes | bytearray) -> None:
-        checksum = util._simple_checksum(response)
-        if checksum != 0:
-            raise ResponseError(
-                f"Simple checksum mismatch (expected 0, got {checksum}) in frame {response.hex()}"
-            )
-        if response[0x00] not in (0xAA, 0xBB, 0xCC):
-            raise ResponseError(f"Incorrect flag in response: {response[0x00]}")
-
-    Session._validate_response = _extended_validate_response  # type: ignore[method-assign]
-
-
-def _patch_session_checksum() -> None:
-    def _proper_write_checksum(self: Session, command: bytearray) -> None:
-        command[0x03] = 0
-        checksum = util._simple_checksum(command)
-        command[0x03] = checksum
-
-    Session._write_checksum = _proper_write_checksum  # type: ignore[method-assign]
-
-
-_patch_session_checksum()
-_patch_session_validation()
-
+from yalexs_ble.session import (
+    AuthError,
+    DisconnectedError,
+    KeycodeError,
+    OperationFailedError,
+    YaleXSBLEError,
+)
 
 from .pin import (
     CMD_KEYCODE_ACCESS,
-    CMD_KEYCODE_CLEAR,
     CMD_KEYCODE_COMMIT,
     CMD_KEYCODE_SET,
     CMD_SET_RTC,
-    CMD_UNITY_GET_KEYCODE,
     YalePinCode,
     YalePinError,
-    build_clear_pin_packet,
     build_commit_pin_packet,
-    build_query_pin_packet,
     build_schedule_packet,
     build_set_pin_packet,
     build_set_rtc_packet,
     check_pin_response_error,
-    decode_packed_bcd_pin,
-    encode_packed_bcd_pin,
+    validate_doorman_pin,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
+
 HEX_KEY_PATTERN = re.compile(r"^[0-9a-fA-F]{32}$")
+
+
+def _is_device_missing_error(exc: BaseException) -> bool:
+    """Return True if an exception indicates BlueZ purged the device from its cache."""
+    err_str = str(exc).lower()
+    return "not found" in err_str or "disappeared" in err_str or "does not exist" in err_str
+
+
+def _translate_ble_command_error(exc: KeycodeError | OperationFailedError) -> YalePinError:
+    """Translate yalexs-ble KeycodeError/OperationFailedError to YalePinError with numeric code."""
+    code = int(exc.error) if isinstance(exc.error, int) else None
+    return YalePinError(str(exc), code=code)
 
 
 @dataclass
@@ -140,9 +127,9 @@ class MockLockClient:
         timeout: float = 20.0,
     ) -> YalePinCode:
         self._ensure_mock_connected()
-        encode_packed_bcd_pin(pin)
-        if slot < 0:
-            raise ValueError("Slot must be 0 or higher.")
+        validate_doorman_pin(pin)
+        if slot < 1:
+            raise ValueError("Slot must be 1 or higher.")
         if valid_from and valid_to and valid_to < valid_from:
             raise ValueError("valid_to cannot be earlier than valid_from.")
 
@@ -170,6 +157,8 @@ class MockLockClient:
         timeout: float = 20.0,
     ) -> bool:
         self._ensure_mock_connected()
+        if slot < 1:
+            raise ValueError("Slot must be 1 or higher.")
         _LOGGER.info("[MOCK BLE] Deleting PIN from slot %d on lock %s", slot, self.address)
         self.pins.pop(slot, None)
         return True
@@ -180,7 +169,9 @@ class MockLockClient:
         max_slots: int = 10,
     ) -> list[YalePinCode]:
         self._ensure_mock_connected()
-        return [YalePinCode(slot=s, pin=p) for s, p in sorted(self.pins.items()) if s < max_slots]
+        return [
+            YalePinCode(slot=s, pin=p) for s, p in sorted(self.pins.items()) if 1 <= s < max_slots
+        ]
 
     async def get_status(self, timeout: float = 15.0) -> YaleLockState:
         self._ensure_mock_connected()
@@ -235,7 +226,7 @@ class MockLockClient:
 
 
 class YaleLockClient:
-    """High-level client for Yale Doorman BLE communication using yalexs-ble."""
+    """High-level proxy client for Yale Doorman BLE communication using yalexs-ble."""
 
     def __init__(
         self,
@@ -356,7 +347,6 @@ class YaleLockClient:
             or not getattr(lock, "_running", False)
             or getattr(lock, "_ble_device", None) is None
         ):
-            # Ensure the BLE device is discovered and attached to the lock watcher
             device = None
             if not force_scan:
                 device = await get_device(self.address)
@@ -389,6 +379,30 @@ class YaleLockClient:
                     raise
 
         return lock
+
+    async def _run_with_rediscovery(
+        self,
+        op_name: str,
+        timeout: float,
+        operation: Callable[[PushLock], Awaitable[_T]],
+    ) -> _T:
+        """Run a PushLock operation, re-scanning once if BlueZ purged the device cache."""
+        lock = await self._ensure_started(timeout=timeout)
+        try:
+            return await operation(lock)
+        except (AuthError, KeycodeError, OperationFailedError):
+            raise
+        except (YaleXSBLEError, BleakError, OSError) as exc:
+            if not _is_device_missing_error(exc):
+                raise
+            _LOGGER.warning(
+                "Lock %s disappeared from BlueZ device cache in %s. Forcing BLE re-discovery...",
+                self.address,
+                op_name,
+            )
+            await self.disconnect()
+            lock = await self._ensure_started(timeout=timeout, force_scan=True)
+            return await operation(lock)
 
     async def disconnect(self) -> None:
         """Cleanly disconnect from the lock and cancel background watchers."""
@@ -444,9 +458,12 @@ class YaleLockClient:
                     update_task = getattr(lock, "_update_task", None)
                     if update_task and not update_task.done():
                         await update_task
+        except AuthError as exc:
+            raise AuthError(
+                f"Authentication failed for {self.address}. Check key and slot ({self.slot})."
+            ) from exc
         except (YaleXSBLEError, BleakError, OSError) as exc:
-            err_str = str(exc).lower()
-            if "not found" in err_str or "disappeared" in err_str or "does not exist" in err_str:
+            if _is_device_missing_error(exc):
                 _LOGGER.warning(
                     "Lock %s disappeared from BlueZ device cache in get_status. Forcing BLE re-discovery...",
                     self.address,
@@ -460,13 +477,6 @@ class YaleLockClient:
             raise TimeoutError(
                 f"Timed out after {timeout}s while waiting for status from {self.address}."
             ) from exc
-        except AuthError as exc:
-            raise AuthError(
-                f"Authentication failed for {self.address}. Check key and slot ({self.slot})."
-            ) from exc
-        except DisconnectedError as exc:
-            _LOGGER.error("BLE error while querying status for %s: %s", self.address, exc)
-            raise
 
         return self.state
 
@@ -478,25 +488,7 @@ class YaleLockClient:
         _LOGGER.info("Sending LOCK command to %s...", self.address)
         try:
             async with asyncio.timeout(timeout):
-                lock = await self._ensure_started(timeout=timeout)
-                try:
-                    await lock.lock()
-                except (YaleXSBLEError, BleakError, OSError) as exc:
-                    err_str = str(exc).lower()
-                    if (
-                        "not found" in err_str
-                        or "disappeared" in err_str
-                        or "does not exist" in err_str
-                    ):
-                        _LOGGER.warning(
-                            "Lock %s disappeared from BlueZ device cache in lock(). Forcing BLE re-discovery...",
-                            self.address,
-                        )
-                        await self.disconnect()
-                        lock = await self._ensure_started(timeout=timeout, force_scan=True)
-                        await lock.lock()
-                    else:
-                        raise
+                await self._run_with_rediscovery("lock()", timeout, lambda lk: lk.lock())
         except TimeoutError as exc:
             raise TimeoutError(
                 f"Timed out after {timeout}s while attempting to lock {self.address}."
@@ -505,7 +497,7 @@ class YaleLockClient:
             raise AuthError(
                 f"Authentication failed for {self.address}. Check key and slot ({self.slot})."
             ) from exc
-        except (DisconnectedError, YaleXSBLEError) as exc:
+        except (DisconnectedError, OperationFailedError, YaleXSBLEError) as exc:
             _LOGGER.error("BLE error while locking %s: %s", self.address, exc)
             raise
 
@@ -515,28 +507,11 @@ class YaleLockClient:
         """Send unlock command to the door lock."""
         if self._mock_client is not None:
             return await self._mock_client.unlock(timeout=timeout)
+
         _LOGGER.info("Sending UNLOCK command to %s...", self.address)
         try:
             async with asyncio.timeout(timeout):
-                lock = await self._ensure_started(timeout=timeout)
-                try:
-                    await lock.unlock()
-                except (YaleXSBLEError, BleakError, OSError) as exc:
-                    err_str = str(exc).lower()
-                    if (
-                        "not found" in err_str
-                        or "disappeared" in err_str
-                        or "does not exist" in err_str
-                    ):
-                        _LOGGER.warning(
-                            "Lock %s disappeared from BlueZ device cache in unlock(). Forcing BLE re-discovery...",
-                            self.address,
-                        )
-                        await self.disconnect()
-                        lock = await self._ensure_started(timeout=timeout, force_scan=True)
-                        await lock.unlock()
-                    else:
-                        raise
+                await self._run_with_rediscovery("unlock()", timeout, lambda lk: lk.unlock())
         except TimeoutError as exc:
             raise TimeoutError(
                 f"Timed out after {timeout}s while attempting to unlock {self.address}."
@@ -545,7 +520,7 @@ class YaleLockClient:
             raise AuthError(
                 f"Authentication failed for {self.address}. Check key and slot ({self.slot})."
             ) from exc
-        except (DisconnectedError, YaleXSBLEError) as exc:
+        except (DisconnectedError, OperationFailedError, YaleXSBLEError) as exc:
             _LOGGER.error("BLE error while unlocking %s: %s", self.address, exc)
             raise
 
@@ -558,74 +533,97 @@ class YaleLockClient:
         expected_opcode: int,
         timeout: float = 15.0,
     ) -> bytes:
-        """Send raw August packet over the authenticated session and return response."""
-        async with asyncio.timeout(timeout):
-            lock = await self._ensure_started(timeout=timeout)
-            if hasattr(lock, "_ble_device") and lock._ble_device is None:
-                raise YaleXSBLEError(
-                    f"Cannot execute raw command on {self.address}: BLE device not discovered"
-                )
-            try:
-                connected_lock = await lock._ensure_connected()
-            except (YaleXSBLEError, BleakError, OSError) as exc:
-                err_str = str(exc).lower()
-                if (
-                    "not found" in err_str
-                    or "disappeared" in err_str
-                    or "does not exist" in err_str
-                ):
-                    _LOGGER.warning(
-                        "Lock %s disappeared from BlueZ device cache (%s). Forcing BLE re-discovery scan...",
-                        self.address,
-                        exc,
-                    )
-                    await self.disconnect()
-                    lock = await self._ensure_started(timeout=timeout, force_scan=True)
-                    connected_lock = await lock._ensure_connected()
-                else:
-                    raise
+        """Send raw August packet over the authenticated session (fallback path only)."""
 
+        async def _send(lock: PushLock) -> bytes:
+            connected_lock = await lock._ensure_connected()
             session = getattr(connected_lock, "session", None)
             if session is None:
                 raise DisconnectedError(f"{self.address}: Lock session is not established.")
 
             matcher = lambda data: (
-                len(data) >= 2 and data[0] in (0xAA, 0xBB, 0xCC) and data[1] == expected_opcode
+                len(data) >= 2 and data[0] in (0xAA, 0xBB) and data[1] == expected_opcode
             )
-            response = await session.execute(cmd, command_name, response_matcher=matcher)
+            return await session.execute(cmd, command_name, response_matcher=matcher)
 
-            return response
+        async with asyncio.timeout(timeout):
+            return await self._run_with_rediscovery(command_name, timeout, _send)
 
     async def set_rtc(
         self,
         timestamp: datetime | int | None = None,
         timeout: float = 20.0,
     ) -> int:
-        """Synchronize the internal Real-Time Clock (RTC) on the Yale lock.
-
-        Args:
-            timestamp: Optional datetime or Unix epoch timestamp to set. Defaults to now (UTC).
-            timeout: Maximum timeout for the BLE operation in seconds.
-
-        Returns:
-            The Unix epoch timestamp (seconds) programmed onto the lock.
-
-        Raises:
-            YalePinError: If the lock rejects the RTC command or operation fails.
-            TimeoutError: If the BLE operation times out.
-            AuthError: If authentication fails.
-        """
+        """Synchronize the internal Real-Time Clock (RTC) on the Yale lock."""
         if self._mock_client is not None:
             return await self._mock_client.set_rtc(timestamp=timestamp, timeout=timeout)
 
-        _LOGGER.info("Synchronizing RTC clock on %s...", self.address)
-        await self._ensure_started(timeout=timeout)
         pkt = build_set_rtc_packet(timestamp)
         ts = struct.unpack("<I", pkt[4:8])[0]
-        resp = await self._execute_raw_command(pkt, "set_rtc", CMD_SET_RTC, timeout=timeout)
-        check_pin_response_error(resp, CMD_SET_RTC)
-        _LOGGER.info("Successfully synchronized RTC clock on %s to %d (UTC).", self.address, ts)
-        return ts
+        _LOGGER.info("Synchronizing RTC clock on %s...", self.address)
+
+        async def _op(lock: PushLock) -> int:
+            if hasattr(lock, "set_rtc"):
+                try:
+                    return await lock.set_rtc(ts)
+                except OperationFailedError as exc:
+                    raise _translate_ble_command_error(exc) from exc
+            resp = await self._execute_raw_command(pkt, "set_rtc", CMD_SET_RTC, timeout=timeout)
+            check_pin_response_error(resp, CMD_SET_RTC)
+            return ts
+
+        try:
+            async with asyncio.timeout(timeout):
+                programmed_ts = await self._run_with_rediscovery("set_rtc()", timeout, _op)
+        except AuthError as exc:
+            raise AuthError(
+                f"Authentication failed for {self.address}. Check key and slot ({self.slot})."
+            ) from exc
+
+        _LOGGER.info(
+            "Successfully synchronized RTC clock on %s to %d (UTC).",
+            self.address,
+            programmed_ts,
+        )
+        return programmed_ts
+
+    async def _add_temporary_pin_fallback(
+        self,
+        lock: PushLock,
+        pin: str,
+        slot: int,
+        valid_from: datetime | None,
+        valid_to: datetime | None,
+        step_timeout: float,
+    ) -> None:
+        """Fallback temporary PIN flow when installed yalexs-ble lacks schedule args."""
+        try:
+            await lock.clear_keycode(slot)
+        except KeycodeError as exc:
+            _LOGGER.debug(
+                "Pre-clearing slot %d on %s returned (ignored): %s", slot, self.address, exc
+            )
+
+        resp1 = await self._execute_raw_command(
+            build_set_pin_packet(pin), "add_pin_set", CMD_KEYCODE_SET, timeout=step_timeout
+        )
+        check_pin_response_error(resp1, CMD_KEYCODE_SET)
+
+        resp2 = await self._execute_raw_command(
+            build_schedule_packet(valid_from=valid_from, valid_to=valid_to),
+            "add_pin_schedule",
+            CMD_KEYCODE_ACCESS,
+            timeout=step_timeout,
+        )
+        check_pin_response_error(resp2, CMD_KEYCODE_ACCESS)
+
+        resp3 = await self._execute_raw_command(
+            build_commit_pin_packet(pin, slot),
+            "add_pin_commit",
+            CMD_KEYCODE_COMMIT,
+            timeout=step_timeout,
+        )
+        check_pin_response_error(resp3, CMD_KEYCODE_COMMIT)
 
     async def add_pin(
         self,
@@ -637,26 +635,7 @@ class YaleLockClient:
         sync_rtc: bool = False,
         timeout: float = 20.0,
     ) -> YalePinCode:
-        """Create or update a PIN code in a specific slot on the Yale lock.
-
-        Args:
-            pin: 4 to 6 digit numeric PIN.
-            slot: Key slot index (1 or higher).
-            name: Optional friendly name for the credential.
-            valid_from: Optional starting datetime for validity.
-            valid_to: Optional ending datetime for validity.
-            sync_rtc: Whether to synchronize the lock's RTC clock before programming the PIN.
-            timeout: Maximum timeout for the entire operation in seconds.
-
-        Returns:
-            YalePinCode object on success.
-
-        Raises:
-            ValueError: If PIN, slot, or date parameters are invalid.
-            YalePinError: If the lock rejects the PIN or operation fails.
-            TimeoutError: If the BLE operation times out.
-            AuthError: If authentication fails.
-        """
+        """Create or update a PIN code in a specific slot on the Yale lock."""
         if self._mock_client is not None:
             return await self._mock_client.add_pin(
                 pin=pin,
@@ -668,52 +647,38 @@ class YaleLockClient:
                 timeout=timeout,
             )
 
-        # Validate parameters early
-        encode_packed_bcd_pin(pin)  # validates digits and length 4-6
-        if slot < 0:
-            raise ValueError("Slot must be 0 or higher.")
+        validate_doorman_pin(pin)
+        if slot < 1:
+            raise ValueError("Slot must be 1 or higher.")
         if valid_from and valid_to and valid_to < valid_from:
             raise ValueError("valid_to cannot be earlier than valid_from.")
 
         _LOGGER.info("Adding PIN to %s (slot %d)...", self.address, slot)
-        await self._ensure_started(timeout=timeout)
         step_timeout = max(10.0, timeout / 4.0)
 
         if sync_rtc:
             await self.set_rtc(timeout=step_timeout)
 
-        # 0. CMD_KEYCODE_CLEAR (0x28) to ensure slot is clean (matches official Yale Home flow)
-        clear_pkt = build_clear_pin_packet(slot, pin=pin)
+        async def _op(lock: PushLock) -> None:
+            try:
+                if valid_from is None and valid_to is None:
+                    await lock.set_keycode(slot, pin)
+                elif "start_time" in inspect.signature(lock.set_keycode).parameters:
+                    await lock.set_keycode(slot, pin, start_time=valid_from, end_time=valid_to)
+                else:
+                    await self._add_temporary_pin_fallback(
+                        lock, pin, slot, valid_from, valid_to, step_timeout
+                    )
+            except KeycodeError as exc:
+                raise _translate_ble_command_error(exc) from exc
+
         try:
-            resp0 = await self._execute_raw_command(
-                clear_pkt, f"add_pin_preclear_slot_{slot}", CMD_KEYCODE_CLEAR, timeout=step_timeout
-            )
-            check_pin_response_error(resp0, CMD_KEYCODE_CLEAR)
-        except YalePinError as exc:
-            _LOGGER.debug(
-                "Pre-clearing slot %d on %s returned (ignored): %s", slot, self.address, exc
-            )
-
-        # 1. CMD_KEYCODE_SET (0x27)
-        set_pkt = build_set_pin_packet(pin)
-        resp1 = await self._execute_raw_command(
-            set_pkt, "add_pin_set", CMD_KEYCODE_SET, timeout=step_timeout
-        )
-        check_pin_response_error(resp1, CMD_KEYCODE_SET)
-
-        # 2. CMD_KEYCODE_ACCESS (0x2B)
-        sched_pkt = build_schedule_packet(valid_from=valid_from, valid_to=valid_to)
-        resp2 = await self._execute_raw_command(
-            sched_pkt, "add_pin_schedule", CMD_KEYCODE_ACCESS, timeout=step_timeout
-        )
-        check_pin_response_error(resp2, CMD_KEYCODE_ACCESS)
-
-        # 3. CMD_KEYCODE_COMMIT (0x2C)
-        commit_pkt = build_commit_pin_packet(pin, slot)
-        resp3 = await self._execute_raw_command(
-            commit_pkt, "add_pin_commit", CMD_KEYCODE_COMMIT, timeout=step_timeout
-        )
-        check_pin_response_error(resp3, CMD_KEYCODE_COMMIT)
+            async with asyncio.timeout(timeout):
+                await self._run_with_rediscovery("add_pin()", timeout, _op)
+        except AuthError as exc:
+            raise AuthError(
+                f"Authentication failed for {self.address}. Check key and slot ({self.slot})."
+            ) from exc
 
         _LOGGER.info("Successfully added PIN to %s in slot %d.", self.address, slot)
         return YalePinCode(
@@ -730,33 +695,29 @@ class YaleLockClient:
         pin: str | None = None,
         timeout: float = 20.0,
     ) -> bool:
-        """Delete/clear a PIN code from a specific slot on the Yale lock.
-
-        Args:
-            slot: Key slot index (0 or higher).
-            pin: Optional PIN to clear specifically.
-            timeout: Operation timeout in seconds.
-
-        Returns:
-            True if deletion was successful.
-
-        Raises:
-            ValueError: If slot is invalid.
-            YalePinError: If the lock rejects the delete operation.
-        """
+        """Delete/clear a PIN code from a specific slot on the Yale lock."""
         if self._mock_client is not None:
             return await self._mock_client.delete_pin(slot=slot, pin=pin, timeout=timeout)
 
-        if slot < 0:
-            raise ValueError("Slot must be 0 or higher.")
+        if slot < 1:
+            raise ValueError("Slot must be 1 or higher.")
 
         _LOGGER.info("Deleting PIN in slot %d on %s...", slot, self.address)
-        await self._ensure_started(timeout=timeout)
-        clear_pkt = build_clear_pin_packet(slot, pin=pin)
-        resp = await self._execute_raw_command(
-            clear_pkt, "delete_pin", CMD_KEYCODE_CLEAR, timeout=timeout
-        )
-        check_pin_response_error(resp, CMD_KEYCODE_CLEAR)
+
+        async def _op(lock: PushLock) -> None:
+            try:
+                await lock.clear_keycode(slot)
+            except KeycodeError as exc:
+                raise _translate_ble_command_error(exc) from exc
+
+        try:
+            async with asyncio.timeout(timeout):
+                await self._run_with_rediscovery("delete_pin()", timeout, _op)
+        except AuthError as exc:
+            raise AuthError(
+                f"Authentication failed for {self.address}. Check key and slot ({self.slot})."
+            ) from exc
+
         _LOGGER.info("Successfully deleted PIN in slot %d on %s.", slot, self.address)
         return True
 
@@ -765,37 +726,22 @@ class YaleLockClient:
         timeout: float = 20.0,
         max_slots: int = 10,
     ) -> list[YalePinCode]:
-        """Query and return active PIN codes stored on the lock across slots 0..max_slots-1.
-
-        Args:
-            timeout: Overall timeout for querying slots.
-            max_slots: Number of slots to inspect (default: 10).
-
-        Returns:
-            List of YalePinCode objects found on the lock.
-        """
+        """Query and return active PIN codes stored on the lock across slots 1..max_slots-1."""
         if self._mock_client is not None:
             return await self._mock_client.list_pins(timeout=timeout, max_slots=max_slots)
 
-        _LOGGER.info("Listing PINs on %s (scanning up to %d slots)...", self.address, max_slots)
-        await self._ensure_started(timeout=timeout)
+        _LOGGER.info("Listing PINs on %s (scanning slots 1..%d)...", self.address, max_slots - 1)
+        lock = await self._ensure_started(timeout=timeout)
         pins: list[YalePinCode] = []
-        per_slot_timeout = max(5.0, timeout / max(1, max_slots))
+        per_slot_timeout = max(5.0, timeout / max(1, max_slots - 1))
 
-        for slot_idx in range(max_slots):
-            query_pkt = build_query_pin_packet(slot_idx)
+        for slot_idx in range(1, max_slots):
             try:
-                resp = await self._execute_raw_command(
-                    query_pkt,
-                    f"query_pin_slot_{slot_idx}",
-                    CMD_UNITY_GET_KEYCODE,
-                    timeout=per_slot_timeout,
-                )
-                if len(resp) >= 16 and resp[15] == 0:
-                    pin_str = decode_packed_bcd_pin(resp[6:13])
-                    if pin_str:
-                        pins.append(YalePinCode(slot=slot_idx, pin=pin_str))
-            except (YalePinError, TimeoutError, BleakError) as exc:
+                async with asyncio.timeout(per_slot_timeout):
+                    pin_str = await lock.get_keycode(slot_idx)
+                if pin_str:
+                    pins.append(YalePinCode(slot=slot_idx, pin=pin_str))
+            except (KeycodeError, YalePinError, TimeoutError, BleakError, ValueError) as exc:
                 _LOGGER.debug("Could not query pin slot %d on %s: %s", slot_idx, self.address, exc)
                 continue
 

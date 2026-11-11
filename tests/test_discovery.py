@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from yalexs_ble.const import COMMAND_SERVICE_UUID, YALE_MFR_ID
+from yalexs_ble.const import ASSA_ABLOY_MFR_ID, COMMAND_SERVICE_UUID, YALE_MFR_ID
 
 from snippen_doorman.ble.discovery import (
     discover_yale_devices,
@@ -16,9 +16,7 @@ from snippen_doorman.ble.discovery import (
 
 def test_parse_yale_serial() -> None:
     """Test serial parsing from local name."""
-    # Valid local name (7 chars: 'ab12345')
     assert parse_yale_serial("ab12345") == "abXXX12345"
-    # Invalid length returns None
     assert parse_yale_serial("short") is None
     assert parse_yale_serial(None) is None
 
@@ -42,6 +40,18 @@ def test_is_yale_advertisement_mfr_data() -> None:
     adv = MagicMock(spec=AdvertisementData)
     adv.service_uuids = []
     adv.manufacturer_data = {YALE_MFR_ID: b"\x01\x02"}
+    adv.local_name = None
+
+    assert is_yale_advertisement(device, adv) is True
+
+
+def test_is_yale_advertisement_assa_abloy_mfr_data() -> None:
+    """Test matching advertisement by ASSA ABLOY manufacturer ID."""
+    device = MagicMock(spec=BLEDevice)
+    device.name = "Lock"
+    adv = MagicMock(spec=AdvertisementData)
+    adv.service_uuids = []
+    adv.manufacturer_data = {ASSA_ABLOY_MFR_ID: b"\x01"}
     adv.local_name = None
 
     assert is_yale_advertisement(device, adv) is True

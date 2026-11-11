@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from bleak import BleakScanner
-from yalexs_ble.const import APPLE_MFR_ID, COMMAND_SERVICE_UUID, YALE_MFR_ID
+from yalexs_ble.const import APPLE_MFR_ID, COMMAND_SERVICE_UUID, YALE_MFR_IDS
 from yalexs_ble.util import local_name_is_unique, local_name_to_serial
 
 if TYPE_CHECKING:
@@ -48,9 +48,9 @@ def is_yale_advertisement(device: BLEDevice, advertisement: AdvertisementData) -
     if COMMAND_SERVICE_UUID.lower() in uuids:
         return True
 
-    # Check 2: Yale manufacturer ID (465 / 0x01D1)
+    # Check 2: Yale / ASSA ABLOY manufacturer IDs (465 / 0x01D1, 302 / 0x012E)
     mfr_data = advertisement.manufacturer_data or {}
-    if YALE_MFR_ID in mfr_data:
+    if any(mfr_id in mfr_data for mfr_id in YALE_MFR_IDS):
         return True
 
     # Check 3: Apple manufacturer ID (76 / 0x004C) with HomeKit data from Yale
