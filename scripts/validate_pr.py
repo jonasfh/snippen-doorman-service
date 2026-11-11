@@ -11,11 +11,13 @@ Validates:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 from packaging.version import InvalidVersion, Version
 
@@ -199,6 +201,74 @@ def check_formatting_hygiene(repo_root: Path) -> bool:
     return True
 
 
+def _load_commit_validator(repo_root: Path) -> ModuleType | None:
+    """Load the shared conventional-commits validator from common-agent-instructions."""
+    validator_path = (
+        repo_root
+        / ".agents"
+        / "common-agent-instructions"
+        / "skills"
+        / "conventional-commits"
+        / "scripts"
+        / "validate_commit.py"
+    )
+    if not validator_path.exists():
+        return None
+
+    spec = importlib.util.spec_from_file_location("conventional_commits_validator", validator_path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["conventional_commits_validator"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_conventional_commits(
+    repo_root: Path,
+    base_ref: str | None = None,
+    pr_title: str | None = None,
+) -> bool:
+    """Validate commit range and optional PR title against Conventional Commits v1.0.0."""
+    if not base_ref and not pr_title:
+        return True
+
+    validator = _load_commit_validator(repo_root)
+    if validator is None:
+        print(
+            "⚠️  Conventional Commits validator not found in .agents/common-agent-instructions; "
+            "skipping commit/PR-title check."
+        )
+        return True
+
+    errors: list[str] = []
+    if pr_title is not None:
+        title_errs = validator.validate_message(pr_title, require_issue=True)
+        for err in title_errs:
+            errors.append(f"PR title: {err}")
+
+    if base_ref:
+        rev_range = f"{base_ref}..HEAD"
+        try:
+            failures = validator.validate_git_range(
+                rev_range,
+                repo_root=repo_root,
+                require_issue=True,
+            )
+        except RuntimeError as exc:
+            print(f"⚠️  Could not validate commit range {rev_range}: {exc}")
+        else:
+            for sha, commit_errs in failures:
+                for err in commit_errs:
+                    errors.append(f"Commit {sha}: {err}")
+
+    if errors:
+        raise ValueError("Conventional Commits check failed:\n" + "\n".join(errors))
+
+    print("✅ Conventional Commits check passed.")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate PR version and changelog")
     parser.add_argument(
@@ -206,6 +276,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--base", type=str, default=None, help="Base git ref for diff check (e.g. origin/main)"
+    )
+    parser.add_argument(
+        "--pr-title",
+        type=str,
+        default=None,
+        help="Optional PR title to validate against Conventional Commits.",
     )
     args = parser.parse_args()
 
@@ -222,6 +298,7 @@ def main() -> int:
         check_version_bump(current_version, latest_tag)
 
         check_changelog(repo_root, version_str, base_ref=args.base)
+        check_conventional_commits(repo_root, base_ref=args.base, pr_title=args.pr_title)
 
         print("🎉 All PR validation checks passed successfully!")
         return 0
