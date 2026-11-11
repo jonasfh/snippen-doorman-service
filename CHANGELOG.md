@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.25.1] - 2026-11-11
+
+### Changed
+- Innført **Conventional Commits v1.0.0** for commit-meldinger, PR-titler og SemVer-mapping (#89):
+  - Oppdatert `.agents/common-agent-instructions` submodul og `AGENTS.md` til Conventional Commits-format.
+  - Lagt til `.agents/skills.json` for automatisk oppdagelse av felles `conventional-commits`-skill i Antigravity.
+  - Utvidet `scripts/validate_pr.py` og `.github/workflows/pr-validator.yml` til å validere commit-range og PR-titler med `validate_commit.py`.
+
 ## [0.25.0] - 2026-11-11
 
 ### Changed
