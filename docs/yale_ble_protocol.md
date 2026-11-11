@@ -1,6 +1,6 @@
 # Yale Doorman BLE Protokoll og Discovery
 
-Dette dokumentet oppsummerer funn og arkitektur for direkte kommunikasjon over Bluetooth Low Energy (BLE) mellom Ubuntu/Linux og Yale Doorman Classic utstyrt med Yale Access Module, basert på undersøkelser av `yalexs-ble` (v4.0.5) og BlueZ.
+Dette dokumentet oppsummerer funn og arkitektur for direkte kommunikasjon over Bluetooth Low Energy (BLE) mellom Ubuntu/Linux og Yale Doorman Classic utstyrt med Yale Access Module, basert på `yalexs-ble` (>= v10.0.0) og BlueZ.
 
 ---
 
@@ -40,6 +40,7 @@ Låsen sender ut BLE-annonser (Advertising Packets) som kan fanges opp uten forh
    - Primær tjeneste-UUID for August/Yale Doorman er `0000fe24-0000-1000-8000-00805f9b34fb` (`COMMAND_SERVICE_UUID`).
 2. **Manufacturer Data**:
    - **Yale Manufacturer ID**: `465` (`0x01D1`).
+   - **ASSA ABLOY Manufacturer ID**: `302` (`0x012E`, inkludert i `YALE_MFR_IDS` siden `yalexs-ble` v6.1.0).
    - **Apple Manufacturer ID**: `76` (`0x004C`) benyttes dersom modulen annonserer HomeKit/HAP-tilstand (starter med byte `0x06` eller `0x11`).
 3. **Local Name og serienummer**:
    - Annonsert lokalt navn (`local_name`) er koblet til låsens serienummer:

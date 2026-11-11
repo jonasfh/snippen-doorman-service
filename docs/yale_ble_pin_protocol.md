@@ -275,9 +275,9 @@ I den offisielle Yale Home-appen (`com.aaecosystem.luna.model.Lock` og `Backgrou
 - `0xBB` / `0xAA`: Gyldig bekreftelse fra modulen (`bb27` for SET, `bb2b` for ACCESS, `bb2c` for COMMIT, `aa28`/`bb28` for CLEAR).
 - `0xCC`: Feilrespons eller ekko dersom pakken ble avvist eller sjekksummen i byte 3 var korrupt.
 
-### Viktig sjekksum-felle i klientimplementasjoner:
-`Session._write_checksum(command)` i `yalexs_ble` beregner `(-sum(command[:18])) & 0xFF` uten først å nullstille `command[0x03]`. Dersom en kommandopakke sendes inn der sjekksummen allerede er ferdig beregnet (slik at totalsummen modulo 256 er 0), vil `_write_checksum` beregne `0x00` og overskrive byte 3 med null. Modulen mottar da en pakke med korrupt sjekksum, kvitterer med `0xCC`, og forkaster koden uten å lagre den i flash-minnet.
-Løsning: Klienten må patche eller sikre at `command[0x03] = 0` før sjekksummen summeres.
+### Historisk sjekksum-felle (løst i `yalexs-ble >= 4.1.0`):
+Eldre versjoner av `yalexs_ble` (<= 4.0.5) beregnet `Session._write_checksum(command)` med `(-sum(command[:18])) & 0xFF` uten først å nullstille `command[0x03]`. Dersom en ferdigberegnet kommandopakke ble sendt inn, ble byte 3 overskrevet med `0x00`, og modulen kvitterte med `0xCC` og forkastet koden.
+Fra og med `yalexs-ble` v4.1.0 nullstiller `Session._write_checksum` byte 3 automatisk før summering, og PIN-kommandoene (`set_keycode`, `clear_keycode`, `get_keycode`) er bygget inn i biblioteket. (Tidsbegrensede PIN-tidsplaner og `CMD_SET_RTC` er foreslått oppstrøms i `Yale-Libs/yalexs-ble#435` / `#436`.)
 
 ### Feilkoder fra modulen:
 Dersom en operasjon feiler i modulen, returneres en statuskode:

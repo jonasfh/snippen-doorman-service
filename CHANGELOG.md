@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-11-11
+
+### Changed
+- Harmonisert BLE-klientlaget med `yalexs-ble>=10.0.0` (#87):
+  - Fjernet obsolete monkeypatcher (`_patch_session_checksum` og `0xCC`-validering) fra `YaleLockClient` ettersom `Session._write_checksum` ble rettet oppstrøms i `yalexs-ble` v4.1.0.
+  - Refaktorert `YaleLockClient` til et tynt proxy-lag over `PushLock` (`clear_keycode`, `get_keycode`, `set_keycode`, og `set_rtc` når tilgjengelig), med automatisk fallback for midlertidige tidsplaner og RTC inntil `Yale-Libs/yalexs-ble#436` er sluppet på PyPI.
+  - Fjernet duplisert BCD-, sjekksum- og feilkodekode i `ble/pin.py` til fordel for `yalexs_ble.util` og `yalexs_ble.const.OperationError` / `KeycodeError`, mens Doorman Classic 4–6 siffer-validering, `MockLockClient` og BlueZ stale-cache gjenoppdaging beholdes.
+  - Oppdatert `ble/discovery.py` til å bruke `YALE_MFR_IDS` (inkluderer både Yale `465` og ASSA ABLOY `302`).
+
 ## [0.24.1] - 2026-11-10
 
 ### Fixed

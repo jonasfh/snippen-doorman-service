@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from yalexs_ble import DoorStatus, LockStatus
-from yalexs_ble.session import AuthError
+from yalexs_ble.const import OperationError
+from yalexs_ble.session import AuthError, KeycodeError, OperationFailedError
 
 from snippen_doorman.ble.client import MockLockClient, YaleLockClient, create_lock_client
+from snippen_doorman.ble.pin import YalePinError
 
 
 def test_client_validation() -> None:
@@ -238,7 +240,7 @@ def test_disconnect_and_context_manager(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_add_pin_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test successful PIN provisioning through 3-step sequence."""
+    """Test successful PIN provisioning delegating to PushLock.set_keycode."""
 
     async def _run():
         client = YaleLockClient(
@@ -247,66 +249,113 @@ def test_add_pin_success(monkeypatch: pytest.MonkeyPatch) -> None:
             slot=1,
         )
 
+        class FakePushLock:
+            def __init__(self) -> None:
+                self.calls: list[tuple[int, str, object, object]] = []
+
+            async def set_keycode(
+                self,
+                slot: int,
+                pin: str,
+                start_time: object = None,
+                end_time: object = None,
+            ) -> None:
+                self.calls.append((slot, pin, start_time, end_time))
+
+        fake_push = FakePushLock()
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock(return_value=fake_push))
+
+        # Permanent PIN
+        result = await client.add_pin(pin="123456", slot=3, name="Guest")
+        assert result.pin == "123456"
+        assert result.slot == 3
+        assert result.name == "Guest"
+        assert fake_push.calls[0] == (3, "123456", None, None)
+
+        # Scheduled temporary PIN
+        dt_from = datetime(2026, 10, 8, 12, 0, 0, tzinfo=UTC)
+        dt_to = datetime(2026, 10, 8, 18, 0, 0, tzinfo=UTC)
+        result_sched = await client.add_pin(
+            pin="654321", slot=4, valid_from=dt_from, valid_to=dt_to
+        )
+        assert result_sched.valid_from == dt_from
+        assert result_sched.valid_to == dt_to
+        assert fake_push.calls[1] == (4, "654321", dt_from, dt_to)
+
+    asyncio.run(_run())
+
+
+def test_add_pin_temporary_fallback_without_schedule_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test fallback to raw schedule commands when PushLock.set_keycode lacks start_time."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="AA:BB:CC:DD:EE:FF",
+            key="0123456789abcdef0123456789abcdef",
+            slot=1,
+        )
+
+        class LegacyPushLock:
+            async def set_keycode(self, slot: int, pin: str) -> None:
+                raise AssertionError("Should not be called for temporary PIN")
+
+            async def clear_keycode(self, slot: int) -> None:
+                sent_commands.append((f"add_pin_preclear_slot_{slot}", 0x28))
+
         sent_commands = []
 
         async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
             sent_commands.append((name, opcode))
-            # Return valid 0xBB success frame
             resp = bytearray(18)
             resp[0] = 0xBB
             resp[1] = opcode
             resp[15] = 0x00
             return bytes(resp)
 
-        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock(return_value=LegacyPushLock()))
         monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
 
-        result = await client.add_pin(pin="123456", slot=3, name="Guest")
+        dt_from = datetime(2026, 10, 8, 12, 0, 0, tzinfo=UTC)
+        dt_to = datetime(2026, 10, 8, 18, 0, 0, tzinfo=UTC)
+        result = await client.add_pin(pin="123456", slot=3, valid_from=dt_from, valid_to=dt_to)
         assert result.pin == "123456"
-        assert result.slot == 3
-        assert result.name == "Guest"
-        assert len(sent_commands) == 4
-        assert sent_commands[0] == ("add_pin_preclear_slot_3", 0x28)
-        assert sent_commands[1] == ("add_pin_set", 0x27)
-        assert sent_commands[2] == ("add_pin_schedule", 0x2B)
-        assert sent_commands[3] == ("add_pin_commit", 0x2C)
+        assert sent_commands == [
+            ("add_pin_preclear_slot_3", 0x28),
+            ("add_pin_set", 0x27),
+            ("add_pin_schedule", 0x2B),
+            ("add_pin_commit", 0x2C),
+        ]
 
     asyncio.run(_run())
 
 
 def test_add_pin_slot_in_use(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test error handling when the requested slot is in use."""
+    """Test KeycodeError from PushLock is translated to YalePinError with numeric code."""
 
     async def _run():
-        from snippen_doorman.ble.pin import YalePinError
-
         client = YaleLockClient(
             address="AA:BB:CC:DD:EE:FF",
             key="0123456789abcdef0123456789abcdef",
             slot=1,
         )
 
-        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
-            resp = bytearray(18)
-            resp[0] = 0xBB
-            resp[1] = opcode
-            if opcode == 0x2C:  # Commit fails with KEYCODE_SLOT_IN_USE (69)
-                resp[15] = 69
-            else:
-                resp[15] = 0x00
-            return bytes(resp)
+        mock_push = MagicMock()
+        mock_push.set_keycode = AsyncMock(
+            side_effect=KeycodeError("commit_keycode", OperationError.KEYCODE_SLOT_IN_USE)
+        )
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock(return_value=mock_push))
 
-        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
-        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
-
-        with pytest.raises(YalePinError, match="KEYCODE_SLOT_IN_USE"):
+        with pytest.raises(YalePinError, match="KEYCODE_SLOT_IN_USE") as excinfo:
             await client.add_pin(pin="123456", slot=3)
+        assert excinfo.value.code == 69
 
     asyncio.run(_run())
 
 
 def test_delete_pin_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test successful PIN deletion."""
+    """Test successful PIN deletion via PushLock.clear_keycode."""
 
     async def _run():
         client = YaleLockClient(
@@ -315,59 +364,39 @@ def test_delete_pin_success(monkeypatch: pytest.MonkeyPatch) -> None:
             slot=1,
         )
 
-        sent_commands = []
-
-        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
-            sent_commands.append((name, opcode))
-            resp = bytearray(18)
-            resp[0] = 0xBB
-            resp[1] = opcode
-            resp[15] = 0x00
-            return bytes(resp)
-
-        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
-        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+        mock_push = MagicMock()
+        mock_push.clear_keycode = AsyncMock()
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock(return_value=mock_push))
 
         ok = await client.delete_pin(slot=3)
         assert ok is True
-        assert len(sent_commands) == 1
-        assert sent_commands[0] == ("delete_pin", 0x28)
+        mock_push.clear_keycode.assert_awaited_once_with(3)
 
     asyncio.run(_run())
 
 
 def test_list_pins_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test querying slots to list configured PIN codes."""
+    """Test querying slots 1..max_slots-1 via PushLock.get_keycode."""
 
     async def _run():
-        from snippen_doorman.ble.pin import encode_packed_bcd_pin
-
         client = YaleLockClient(
             address="AA:BB:CC:DD:EE:FF",
             key="0123456789abcdef0123456789abcdef",
             slot=1,
         )
 
-        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
-            slot_queried = cmd[4]
-            resp = bytearray(18)
-            resp[0] = 0xBB
-            resp[1] = opcode
-            resp[4] = slot_queried
-            if slot_queried == 3:
-                # Slot 3 has a programmed PIN: "654321"
-                resp[6:13] = encode_packed_bcd_pin("654321")
-                resp[15] = 0x00
-            else:
-                # Other slots empty: all 0xFF
-                resp[6:13] = bytes([0xFF] * 7)
-                resp[15] = 0x00
-            return bytes(resp)
+        queried_slots: list[int] = []
 
-        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
-        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+        async def _mock_get_keycode(slot_idx: int) -> str | None:
+            queried_slots.append(slot_idx)
+            return "654321" if slot_idx == 3 else None
+
+        mock_push = MagicMock()
+        mock_push.get_keycode = _mock_get_keycode
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock(return_value=mock_push))
 
         pins = await client.list_pins(max_slots=5)
+        assert queried_slots == [1, 2, 3, 4]
         assert len(pins) == 1
         assert pins[0].slot == 3
         assert pins[0].pin == "654321"
@@ -389,16 +418,16 @@ def test_pin_argument_validation() -> None:
             await client.add_pin(pin="12", slot=1)
 
         with pytest.raises(ValueError, match="Slot"):
-            await client.add_pin(pin="1234", slot=-1)
+            await client.add_pin(pin="1234", slot=0)
 
         with pytest.raises(ValueError, match="Slot"):
-            await client.delete_pin(slot=-1)
+            await client.delete_pin(slot=0)
 
     asyncio.run(_run())
 
 
 def test_set_rtc_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test successful RTC clock synchronization over BLE."""
+    """Test successful RTC clock synchronization via PushLock.set_rtc."""
 
     async def _run():
         client = YaleLockClient(
@@ -407,61 +436,42 @@ def test_set_rtc_success(monkeypatch: pytest.MonkeyPatch) -> None:
             slot=1,
         )
 
-        sent_commands = []
-
-        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
-            sent_commands.append((name, opcode, cmd))
-            resp = bytearray(18)
-            resp[0] = 0xBB
-            resp[1] = opcode
-            resp[15] = 0x00
-            return bytes(resp)
-
-        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
-        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+        mock_push = MagicMock()
+        mock_push.set_rtc = AsyncMock(side_effect=lambda ts: ts)
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock(return_value=mock_push))
 
         # 1. Default timestamp
         ts = await client.set_rtc()
         assert ts > 1_700_000_000
-        assert len(sent_commands) == 1
-        assert sent_commands[0][0] == "set_rtc"
-        assert sent_commands[0][1] == 0x10
 
         # 2. Explicit timestamp
         dt = datetime(2026, 10, 9, 15, 0, 0, tzinfo=UTC)
         ts2 = await client.set_rtc(timestamp=dt)
         assert ts2 == int(dt.timestamp())
-        assert len(sent_commands) == 2
-        assert sent_commands[1][0] == "set_rtc"
-        assert sent_commands[1][1] == 0x10
+        assert mock_push.set_rtc.await_count == 2
 
     asyncio.run(_run())
 
 
 def test_set_rtc_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test error handling when lock rejects set_rtc."""
+    """Test OperationFailedError from PushLock.set_rtc is mapped to YalePinError."""
 
     async def _run():
-        from snippen_doorman.ble.pin import YalePinError
-
         client = YaleLockClient(
             address="AA:BB:CC:DD:EE:FF",
             key="0123456789abcdef0123456789abcdef",
             slot=1,
         )
 
-        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
-            resp = bytearray(18)
-            resp[0] = 0xBB
-            resp[1] = opcode
-            resp[15] = 0x05  # KEYCODE_INVALID_ACCESS
-            return bytes(resp)
+        mock_push = MagicMock()
+        mock_push.set_rtc = AsyncMock(
+            side_effect=OperationFailedError("set_rtc", OperationError.KEYCODE_INVALID_ACCESS)
+        )
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock(return_value=mock_push))
 
-        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
-        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
-
-        with pytest.raises(YalePinError, match="Lock rejected opcode 0x10"):
+        with pytest.raises(YalePinError, match="KEYCODE_INVALID_ACCESS") as excinfo:
             await client.set_rtc()
+        assert excinfo.value.code == OperationError.KEYCODE_INVALID_ACCESS.value
 
     asyncio.run(_run())
 
@@ -476,28 +486,28 @@ def test_add_pin_with_sync_rtc(monkeypatch: pytest.MonkeyPatch) -> None:
             slot=1,
         )
 
-        sent_commands = []
+        call_order: list[str] = []
 
-        async def _mock_execute_raw(cmd, name, opcode, timeout=15.0):
-            sent_commands.append((name, opcode))
-            resp = bytearray(18)
-            resp[0] = 0xBB
-            resp[1] = opcode
-            resp[15] = 0x00
-            return bytes(resp)
+        class FakePushLock:
+            async def set_rtc(self, ts: int) -> int:
+                call_order.append("set_rtc")
+                return ts
 
-        monkeypatch.setattr(client, "_ensure_started", AsyncMock())
-        monkeypatch.setattr(client, "_execute_raw_command", _mock_execute_raw)
+            async def set_keycode(
+                self,
+                slot: int,
+                pin: str,
+                start_time: object = None,
+                end_time: object = None,
+            ) -> None:
+                call_order.append("set_keycode")
+
+        monkeypatch.setattr(client, "_ensure_started", AsyncMock(return_value=FakePushLock()))
 
         result = await client.add_pin(pin="123456", slot=3, sync_rtc=True)
         assert result.pin == "123456"
         assert result.slot == 3
-        assert len(sent_commands) == 5
-        assert sent_commands[0] == ("set_rtc", 0x10)
-        assert sent_commands[1] == ("add_pin_preclear_slot_3", 0x28)
-        assert sent_commands[2] == ("add_pin_set", 0x27)
-        assert sent_commands[3] == ("add_pin_schedule", 0x2B)
-        assert sent_commands[4] == ("add_pin_commit", 0x2C)
+        assert call_order == ["set_rtc", "set_keycode"]
 
     asyncio.run(_run())
 
@@ -652,5 +662,56 @@ def test_ble_rediscovery_when_device_disappears(monkeypatch: pytest.MonkeyPatch)
         assert call_count == 2
         assert len(scanned_devices) == 1
         assert scanned_devices[0].address == "98:1B:B5:0B:BB:35"
+
+    asyncio.run(_run())
+
+
+def test_ble_rediscovery_on_push_lock_operation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that PushLock methods (e.g. delete_pin) re-discover device on BlueZ cache miss."""
+
+    async def _run():
+        client = YaleLockClient(
+            address="98:1B:B5:0B:BB:35",
+            key="0123456789abcdef0123456789abcdef",
+            slot=4,
+        )
+
+        call_count = 0
+
+        async def _mock_clear_keycode(slot: int) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                from yalexs_ble.session import YaleXSBLEError
+
+                raise YaleXSBLEError(
+                    "device 'dev_98_1B_B5_0B_BB_35' not found: The device disappeared"
+                )
+
+        mock_push = MagicMock()
+        mock_push._running = True
+        mock_push._ble_device = MagicMock()
+        mock_push._first_update_future = None
+        mock_push.wait_for_first_update = AsyncMock()
+        mock_push.clear_keycode = _mock_clear_keycode
+        mock_push._execute_forced_disconnect = AsyncMock()
+
+        scanned_devices = []
+
+        async def _mock_find_device(address, timeout=5.0):
+            fresh_device = MagicMock()
+            fresh_device.address = address
+            scanned_devices.append(fresh_device)
+            return fresh_device
+
+        from bleak import BleakScanner
+
+        monkeypatch.setattr(BleakScanner, "find_device_by_address", _mock_find_device)
+        client._push_lock = mock_push
+
+        assert await client.delete_pin(slot=3) is True
+        assert call_count == 2
+        assert len(scanned_devices) == 1
+        mock_push.set_ble_device.assert_called_once_with(scanned_devices[0])
 
     asyncio.run(_run())
