@@ -43,6 +43,18 @@ apt-get install -y --no-install-recommends \
     systemd-timesyncd \
     fake-hwclock
 
+# Persist systemd journal logs across reboots while limiting SD-card usage.
+echo "📝 Configuring persistent systemd journal..."
+mkdir -p /etc/systemd/journald.conf.d
+systemd-tmpfiles --create --prefix /var/log/journal
+cat << 'EOF' > /etc/systemd/journald.conf.d/99-persistent.conf
+[Journal]
+Storage=persistent
+SystemMaxUse=200M
+EOF
+chmod 644 /etc/systemd/journald.conf.d/99-persistent.conf
+systemctl restart systemd-journald
+
 # 3. Create dedicated service user and groups
 echo "👤 [2/7] Configuring service user '${SERVICE_USER}' and groups..."
 if ! getent group "${SERVICE_GROUP}" >/dev/null; then

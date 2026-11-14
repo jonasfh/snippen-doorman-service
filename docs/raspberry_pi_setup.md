@@ -30,14 +30,15 @@ sudo bash scripts/install_pi.sh
 
 ### Hva skriptet utfører automatisk:
 1. Installerer påkrevde systempakker (`python3-venv`, `python3-pip`, `bluez`, `rfkill`, `libglib2.0-dev`, `systemd-timesyncd`, `fake-hwclock`).
-2. Oppretter en dedikert, uprivilegert systembruker og gruppe `doorman`.
-3. Tildeler systembrukeren gruppetilhørighet i `bluetooth` og `netdev`.
-4. Oppretter installasjonskatalog `/opt/snippen-doorman-service` med et isolert Python-virtualenv (`.venv`).
-5. Installerer `snippen-doorman-service` i det virtuelle miljøet.
-6. Installerer D-Bus-policyen `/etc/dbus-1/system.d/snippen-doorman.conf` for direkte BlueZ-kommunikasjon uten root-rettigheter.
-7. Konfigurerer kontinuerlig NTP-tidssynkronisering (`systemd-timesyncd`) mot norsk tidsserver-pool (`no.pool.ntp.org`).
-8. Installerer og aktiverer systemd-tjenesten `/etc/systemd/system/snippen-doorman.service` (med avhengighet til `time-sync.target`).
-9. Oppretter miljøfilen `/etc/snippen-doorman/snippen-doorman.env` med sikre filrettigheter (`0640`, eies av `root:doorman`).
+2. Aktiverer persistent systemd-journald-logging i `/var/log/journal`, med maksimal størrelse på 200 MB.
+3. Oppretter en dedikert, uprivilegert systembruker og gruppe `doorman`.
+4. Tildeler systembrukeren gruppetilhørighet i `bluetooth` og `netdev`.
+5. Oppretter installasjonskatalog `/opt/snippen-doorman-service` med et isolert Python-virtualenv (`.venv`).
+6. Installerer `snippen-doorman-service` i det virtuelle miljøet.
+7. Installerer D-Bus-policyen `/etc/dbus-1/system.d/snippen-doorman.conf` for direkte BlueZ-kommunikasjon uten root-rettigheter.
+8. Konfigurerer kontinuerlig NTP-tidssynkronisering (`systemd-timesyncd`) mot norsk tidsserver-pool (`no.pool.ntp.org`).
+9. Installerer og aktiverer systemd-tjenesten `/etc/systemd/system/snippen-doorman.service` (med avhengighet til `time-sync.target`).
+10. Oppretter miljøfilen `/etc/snippen-doorman/snippen-doorman.env` med sikre filrettigheter (`0640`, eies av `root:doorman`).
 
 ---
 
@@ -117,6 +118,20 @@ sudo systemctl restart snippen-doorman
 ### Se sanntidslogger
 ```bash
 journalctl -u snippen-doorman -f
+```
+
+### Historiske logger etter omstart
+Installereren konfigurerer journald til å lagre logger vedvarende under `/var/log/journal`. Journalen er begrenset til 200 MB (`SystemMaxUse`); journald fjerner eldre logger etter behov for å holde seg innenfor grensen.
+
+```bash
+# Vis booter som har logger lagret
+journalctl --list-boots
+
+# Vis doorman-loggene fra forrige boot
+journalctl -b -1 -u snippen-doorman
+
+# Vis alle logger fra forrige boot ved feilsøking
+journalctl -b -1
 ```
 
 ---
