@@ -54,6 +54,22 @@ The doorman service can be configured via CLI flags or environment variables:
 
 ## Quick Start (Development)
 
+### Host-First Development (`./dev`)
+
+Run tests, linting, and interactive shells from the host inside an ephemeral `doorman-tools` container (defined in `../snippen-testing/compose.tools.yml`, with `/dev/bus/usb` and `/var/run/dbus/system_bus_socket` pass-through for BLE/ADB):
+
+```bash
+./dev test               # Run pytest
+./dev lint               # Run ruff check
+./dev lint:fix           # Run ruff check --fix && ruff format
+./dev pytest [args...]   # Run pytest with custom args
+./dev ruff [args...]     # Run ruff with custom args
+./dev shell              # Open interactive bash shell in doorman-tools
+./dev build              # Rebuild doorman-tools image
+```
+
+When running the full 4-service stack from `../snippen-testing` (`./dev up`), `src/` is bind-mounted live into `snippen-doorman-service`. See [DEV_README.md](DEV_README.md) for architecture and detailed setup.
+
 ### BLE Discovery and Lock Operations
 
 Discover Yale Doorman locks and access modules in range:

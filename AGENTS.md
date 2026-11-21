@@ -4,6 +4,7 @@
 Guide AI agents working in `snippen-doorman-service`. Keep this root file as a concise router; load detailed procedures from `.agents/` sub-guidelines and `skills/` on demand.
 
 ## Always-On Rules
+- **Host-First Execution (`./dev`)**: When running on the host (outside Dev Containers), execute all Python/pytest/ruff commands through `./dev` (`./dev test`, `./dev lint`, `./dev lint:fix`, `./dev shell`), which runs inside the ephemeral `doorman-tools` container defined in `../snippen-testing/compose.tools.yml`.
 - **Python & Environment**: Use Python 3.14+ under `src/snippen_doorman/`. In Dev Containers, use `/home/vscode/.venv` (outside `/workspaces/snippen-doorman-service` to prevent collisions).
 - **Database Rules**: Always include `created_at` and `modified_at` timestamps on database models and custom database tables.
 - **Formatting & Quality**: Routinely run `python scripts/format.py` (strips trailing whitespace, enforces single EOF newline) and resolve all `ruff check .` (or `flake8`) and `pytest` failures before completion (via `/home/vscode/.venv/bin/` in Dev Containers).
