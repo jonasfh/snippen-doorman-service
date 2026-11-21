@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTING_DIR="$(cd "$SCRIPT_DIR/../snippen-testing" && pwd)"
 COMPOSE_TOOLS="$TESTING_DIR/compose.tools.yml"
+COMPOSE_STACK=(-f "$TESTING_DIR/docker-compose.yml" -f "$TESTING_DIR/docker-compose.dev.yml")
 
 run_tool() {
   docker compose -f "$COMPOSE_TOOLS" run -T --rm --no-deps doorman-tools "$@"
@@ -11,6 +12,18 @@ run_tool() {
 
 run_interactive() {
   docker compose -f "$COMPOSE_TOOLS" run --rm --no-deps doorman-tools "$@"
+}
+
+exec_container() {
+  local flags=()
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    flags+=(-T)
+  fi
+  if [ $# -eq 0 ]; then
+    docker compose "${COMPOSE_STACK[@]}" exec "${flags[@]}" snippen-doorman-service sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'
+  else
+    docker compose "${COMPOSE_STACK[@]}" exec "${flags[@]}" snippen-doorman-service "$@"
+  fi
 }
 
 usage() {
@@ -24,6 +37,7 @@ Tooling (runs in ephemeral doorman-tools container with bluez/adb/USB):
   pytest [args...]   Run pytest with custom args
   ruff [args...]     Run ruff with custom args
   shell              Open interactive bash shell in doorman-tools
+  container [cmd...] Run command (or shell) in running snippen-doorman-service container
   build              Build doorman-tools image
 EOF
 }
@@ -38,6 +52,7 @@ case "$cmd" in
   pytest)         run_tool pytest "$@" ;;
   ruff)           run_tool ruff "$@" ;;
   shell)          run_interactive bash ;;
+  container)      exec_container "$@" ;;
   build)          docker compose -f "$COMPOSE_TOOLS" build doorman-tools ;;
   help|-h|--help) usage ;;
   *)
