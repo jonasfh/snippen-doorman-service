@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TESTING_DIR="$(cd "$SCRIPT_DIR/../snippen-testing" && pwd)"
+COMPOSE_TOOLS="$TESTING_DIR/compose.tools.yml"
+
+run_tool() {
+  docker compose -f "$COMPOSE_TOOLS" run -T --rm --no-deps doorman-tools "$@"
+}
+
+run_interactive() {
+  docker compose -f "$COMPOSE_TOOLS" run --rm --no-deps doorman-tools "$@"
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./dev <command> [args...]
+
+Tooling (runs in ephemeral doorman-tools container with bluez/adb/USB):
+  test               Run pytest
+  lint               Run ruff check
+  lint:fix           Run ruff check --fix && ruff format
+  pytest [args...]   Run pytest with custom args
+  ruff [args...]     Run ruff with custom args
+  shell              Open interactive bash shell in doorman-tools
+  build              Build doorman-tools image
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  test)           run_tool pytest "$@" ;;
+  lint)           run_tool ruff check . "$@" ;;
+  lint:fix)       run_tool bash -lc "ruff check --fix . && ruff format ." ;;
+  pytest)         run_tool pytest "$@" ;;
+  ruff)           run_tool ruff "$@" ;;
+  shell)          run_interactive bash ;;
+  build)          docker compose -f "$COMPOSE_TOOLS" build doorman-tools ;;
+  help|-h|--help) usage ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
